@@ -166,6 +166,26 @@ abstract class VideoPlayerPlatform {
     throw UnimplementedError('nerdStat() has not been implemented.');
   }
 
+  ///Remove ad view on native side.
+  Future<void> disposeAdView(int? textureId) {
+    throw UnimplementedError('disposeAdView() has not been implemented.');
+  }
+
+  ///Whether an ad is currently playing.
+  Future<bool?> isAdPlaying(int? textureId) {
+    throw UnimplementedError('isAdPlaying() has not been implemented.');
+  }
+
+  ///Duration of the underlying content.
+  Future<Duration?> contentDuration(int? textureId) {
+    throw UnimplementedError('contentDuration() has not been implemented.');
+  }
+
+  ///Position of the underlying content.
+  Future<Duration?> contentPosition(int? textureId) {
+    throw UnimplementedError('contentPosition() has not been implemented.');
+  }
+
   /// Returns a widget displaying the video with a given textureID.
   Widget buildView(int? textureId) {
     throw UnimplementedError('buildView() has not been implemented.');
@@ -200,6 +220,7 @@ class DataSource {
   DataSource({
     required this.sourceType,
     this.uri,
+    this.adsUri,
     this.formatHint,
     this.asset,
     this.package,
@@ -242,6 +263,9 @@ class DataSource {
   /// This will be in different formats depending on the [DataSourceType] of
   /// the original video.
   final String? uri;
+
+  /// Optional ads uri/tag.
+  final String? adsUri;
 
   /// **Android only**. Will override the platform's generic file format
   /// detection with whatever is set here.
@@ -325,7 +349,7 @@ class DataSource {
 
   @override
   String toString() =>
-      'DataSource{sourceType: $sourceType, uri: $uri certificateUrl: $certificateUrl, formatHint:'
+      'DataSource{sourceType: $sourceType, uri: $uri, adsUri: $adsUri, certificateUrl: $certificateUrl, formatHint:'
       ' $formatHint, asset: $asset, package: $package, headers: $headers,'
       ' useCache: $useCache,maxCacheSize: $maxCacheSize, maxCacheFileSize: '
       '$maxCacheFileSize, showNotification: $showNotification, title: $title,'
@@ -462,6 +486,12 @@ enum VideoEventType {
 
   ///Nerd stat event.
   nerdStat,
+
+  ///Ad playback started.
+  adStarted,
+
+  ///Ad playback ended.
+  adEnded,
 
   /// An unknown event has been received.
   unknown,

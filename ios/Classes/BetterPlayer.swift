@@ -3,6 +3,7 @@ import Flutter
 import AVFoundation
 import AVKit
 import UIKit
+import GoogleInteractiveMediaAds
 
 private var timeRangeContext = 0
 private var statusContext = 0
@@ -11,7 +12,7 @@ private var playbackBufferEmptyContext = 0
 private var playbackBufferFullContext = 0
 private var presentationSizeContext = 0
 
-public class BetterPlayer: NSObject, FlutterPlatformView, FlutterStreamHandler, AVPictureInPictureControllerDelegate {
+public class BetterPlayer: NSObject, FlutterPlatformView, FlutterStreamHandler, AVPictureInPictureControllerDelegate, IMAAdsLoaderDelegate, IMAAdsManagerDelegate {
     public private(set) var player: AVPlayer
     public private(set) var loaderDelegate: BetterPlayerEzDrmAssetsLoaderDelegate?
     public var eventChannel: FlutterEventChannel?
@@ -33,6 +34,15 @@ public class BetterPlayer: NSObject, FlutterPlatformView, FlutterStreamHandler, 
     public var overriddenDuration: Int = 0
     public var lastAvPlayerTimeControlStatus: AVPlayer.TimeControlStatus? = nil
     public var isNerdStatEnabled: Bool = false
+    public var isAdsPlaying: Bool = false
+    public var contentPlayhead: IMAAVPlayerContentPlayhead?
+    public var adsLoader: IMAAdsLoader?
+    public var adTagUrlOrAdsResponse: String = ""
+    public var adsManager: IMAAdsManager?
+    public var isAdTagUrl: Bool = true
+    public var thisView: BetterPlayerView
+    public var hasRequestedAds: Bool = false
+    public var adRequestRetryCount: Int = 0
 
     private var pipController: AVPictureInPictureController?
     private var restoreUIOnPipStop: ((Bool) -> Void)?
@@ -41,7 +51,9 @@ public class BetterPlayer: NSObject, FlutterPlatformView, FlutterStreamHandler, 
 
     public override init() {
         self.player = AVPlayer()
+        self.thisView = BetterPlayerView(frame: .zero)
         super.init()
+        self.thisView.player = self.player
         self.player.actionAtItemEnd = .none
         if #available(iOS 10.0, *) {
             self.player.automaticallyWaitsToMinimizeStalling = false
@@ -50,6 +62,8 @@ public class BetterPlayer: NSObject, FlutterPlatformView, FlutterStreamHandler, 
         self.isInitialized = false
         self.isPlaying = false
         self.disposed = false
+        self.setUpAdsLoader()
+        self.contentPlayhead = IMAAVPlayerContentPlayhead(avPlayer: self.player)
     }
 
     public convenience init(frame: CGRect) {
@@ -57,9 +71,7 @@ public class BetterPlayer: NSObject, FlutterPlatformView, FlutterStreamHandler, 
     }
 
     public func view() -> UIView {
-        let playerView = BetterPlayerView(frame: .zero)
-        playerView.player = player
-        return playerView
+        return thisView
     }
 
     // MARK: - Observers
@@ -155,12 +167,15 @@ public class BetterPlayer: NSObject, FlutterPlatformView, FlutterStreamHandler, 
     public func setDataSourceAsset(_ assetPath: String, key: String?, certificateUrl: String?, licenseUrl: String?, cacheKey: String?, cacheManager: CacheManager, overriddenDuration: Int) {
         if let path = Bundle.main.path(forResource: assetPath, ofType: nil) {
             let url = URL(fileURLWithPath: path)
-            setDataSourceURL(url, key: key, certificateUrl: certificateUrl, licenseUrl: licenseUrl, headers: [:], useCache: false, cacheKey: cacheKey, cacheManager: cacheManager, overriddenDuration: overriddenDuration, videoExtension: nil)
+            setDataSourceURL(url, key: key, certificateUrl: certificateUrl, licenseUrl: licenseUrl, headers: [:], useCache: false, cacheKey: cacheKey, cacheManager: cacheManager, overriddenDuration: overriddenDuration, videoExtension: nil, adsUrl: nil)
         }
     }
 
-    public func setDataSourceURL(_ url: URL, key: String?, certificateUrl: String?, licenseUrl: String?, headers: [AnyHashable: Any], useCache: Bool, cacheKey: String?, cacheManager: CacheManager, overriddenDuration: Int, videoExtension: String?) {
+    public func setDataSourceURL(_ url: URL, key: String?, certificateUrl: String?, licenseUrl: String?, headers: [AnyHashable: Any], useCache: Bool, cacheKey: String?, cacheManager: CacheManager, overriddenDuration: Int, videoExtension: String?, adsUrl: String?) {
         self.overriddenDuration = 0
+        adTagUrlOrAdsResponse = adsUrl ?? ""
+        hasRequestedAds = false
+        adRequestRetryCount = 0
         var finalHeaders = headers
         if finalHeaders["dummy"] == nil {} // keep dictionary type stable
 
@@ -188,6 +203,7 @@ public class BetterPlayer: NSObject, FlutterPlatformView, FlutterStreamHandler, 
             self.overriddenDuration = overriddenDuration
         }
         setDataSourcePlayerItem(item, key: key)
+        requestAds()
     }
 
     private func setDataSourcePlayerItem(_ item: AVPlayerItem, key: String?) {
@@ -374,6 +390,7 @@ public class BetterPlayer: NSObject, FlutterPlatformView, FlutterStreamHandler, 
     }
 
     public func play() {
+        if isAdsPlaying { return }
         stalledCount = 0
         isStalledCheckStarted = false
         isPlaying = true
@@ -381,8 +398,27 @@ public class BetterPlayer: NSObject, FlutterPlatformView, FlutterStreamHandler, 
     }
 
     public func pause() {
+        if isAdsPlaying { return }
         isPlaying = false
         updatePlayingState()
+    }
+
+    public func disposeAdView() {
+        adsManager?.destroy()
+        adsManager = nil
+        isAdsPlaying = false
+    }
+
+    public func isAdPlaying() -> Bool {
+        return isAdsPlaying
+    }
+
+    public func contentDuration() -> Int64 {
+        return duration()
+    }
+
+    public func contentPosition() -> Int64 {
+        return position()
     }
 
     public func position() -> Int64 {
@@ -465,6 +501,116 @@ public class BetterPlayer: NSObject, FlutterPlatformView, FlutterStreamHandler, 
     private func stopNerdStatTimer() {
         nerdStatTimer?.invalidate()
         nerdStatTimer = nil
+    }
+
+    // MARK: - IMA Ads
+    private func setUpAdsLoader() {
+        if adsLoader == nil {
+            adsLoader = IMAAdsLoader(settings: nil)
+        }
+        adsLoader?.delegate = self
+    }
+
+    private func requestAds() {
+        guard !adTagUrlOrAdsResponse.isEmpty else { return }
+        guard !hasRequestedAds else { return }
+        guard eventSink != nil else { return }
+        guard thisView.window != nil else {
+            scheduleAdsRetry()
+            return
+        }
+        guard let viewController = topViewController() else {
+            scheduleAdsRetry()
+            return
+        }
+        let request: IMAAdsRequest
+        let adDisplayContainer = IMAAdDisplayContainer(adContainer: thisView, viewController: viewController)
+        if isAdTagUrl {
+            request = IMAAdsRequest(
+                adTagUrl: adTagUrlOrAdsResponse,
+                adDisplayContainer: adDisplayContainer,
+                contentPlayhead: contentPlayhead,
+                userContext: nil
+            )
+        } else {
+            request = IMAAdsRequest(
+                adsResponse: adTagUrlOrAdsResponse,
+                adDisplayContainer: adDisplayContainer,
+                contentPlayhead: contentPlayhead,
+                userContext: nil
+            )
+        }
+        hasRequestedAds = true
+        DispatchQueue.main.async { [weak self] in
+            self?.adsLoader?.requestAds(with: request)
+        }
+    }
+
+    private func scheduleAdsRetry() {
+        guard adRequestRetryCount < 10 else { return }
+        adRequestRetryCount += 1
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+            self?.requestAds()
+        }
+    }
+
+    private func topViewController() -> UIViewController? {
+        if #available(iOS 13.0, *) {
+            let scenes = UIApplication.shared.connectedScenes
+                .compactMap { $0 as? UIWindowScene }
+                .filter { $0.activationState == .foregroundActive }
+            let root = scenes
+                .flatMap { $0.windows }
+                .first(where: { $0.isKeyWindow })?
+                .rootViewController
+            return topPresentedController(root)
+        } else {
+            return topPresentedController(UIApplication.shared.keyWindow?.rootViewController)
+        }
+    }
+
+    private func topPresentedController(_ root: UIViewController?) -> UIViewController? {
+        var current = root
+        while let presented = current?.presentedViewController {
+            current = presented
+        }
+        return current
+    }
+
+    public func adsLoader(_ adsLoader: IMAAdsLoader, adsLoadedWith adsLoadedData: IMAAdsLoadedData) {
+        self.adsManager = adsLoadedData.adsManager
+        self.adsManager?.delegate = self
+        self.adsManager?.initialize(with: nil)
+    }
+
+    public func adsLoader(_ adsLoader: IMAAdsLoader, failedWith adErrorData: IMAAdLoadingErrorData) {
+        isAdsPlaying = false
+        eventSink?(["event": "adEnded"])
+        player.play()
+    }
+
+    public func adsManager(_ adsManager: IMAAdsManager, didReceive event: IMAAdEvent) {
+        if event.type == .LOADED {
+            adsManager.start()
+        }
+    }
+
+    public func adsManager(_ adsManager: IMAAdsManager, didReceive error: IMAAdError) {
+        isAdsPlaying = false
+        eventSink?(["event": "adEnded"])
+        player.play()
+    }
+
+    public func adsManagerDidRequestContentPause(_ adsManager: IMAAdsManager) {
+        eventSink?(["event": "adStarted"])
+        player.pause()
+        isAdsPlaying = true
+    }
+
+    public func adsManagerDidRequestContentResume(_ adsManager: IMAAdsManager) {
+        eventSink?(["event": "adEnded"])
+        isAdsPlaying = false
+        player.play()
     }
 
     public func setTrackParameters(width: Int, height: Int, bitrate: Int) {
@@ -597,12 +743,19 @@ public class BetterPlayer: NSObject, FlutterPlatformView, FlutterStreamHandler, 
     public func onListen(withArguments arguments: Any?, eventSink events: @escaping FlutterEventSink) -> FlutterError? {
         eventSink = events
         onReadyToPlay()
+        requestAds()
         return nil
     }
 
     public func clear() {
         stopNerdStatTimer()
         isNerdStatEnabled = false
+        isAdsPlaying = false
+        adTagUrlOrAdsResponse = ""
+        hasRequestedAds = false
+        adRequestRetryCount = 0
+        adsManager?.destroy()
+        adsManager = nil
         isInitialized = false
         isPlaying = false
         disposed = false
@@ -623,6 +776,7 @@ public class BetterPlayer: NSObject, FlutterPlatformView, FlutterStreamHandler, 
         pause()
         disposeSansEventChannel()
         stopNerdStatTimer()
+        disposeAdView()
         eventChannel?.setStreamHandler(nil)
         disablePictureInPicture()
         setPictureInPicture(false)

@@ -62,6 +62,7 @@ class MethodChannelVideoPlayer extends VideoPlayerPlatform {
         dataSourceDescription = <String, dynamic>{
           'key': dataSource.key,
           'uri': dataSource.uri,
+          'ads_url': dataSource.adsUri,
           'formatHint': dataSource.rawFormalHint,
           'headers': dataSource.headers,
           'useCache': dataSource.useCache,
@@ -189,6 +190,24 @@ class MethodChannelVideoPlayer extends VideoPlayerPlatform {
   );
 
   @override
+  Future<void> disposeAdView(int? textureId) =>
+      _channel.invokeMethod<void>('disposeAdView', <String, dynamic>{'textureId': textureId});
+
+  @override
+  Future<bool?> isAdPlaying(int? textureId) =>
+      _channel.invokeMethod<bool>('isAdPlaying', <String, dynamic>{'textureId': textureId});
+
+  @override
+  Future<Duration?> contentDuration(int? textureId) async => Duration(
+    milliseconds: await _channel.invokeMethod<int>('contentDuration', <String, dynamic>{'textureId': textureId}) ?? -1,
+  );
+
+  @override
+  Future<Duration?> contentPosition(int? textureId) async => Duration(
+    milliseconds: await _channel.invokeMethod<int>('contentPosition', <String, dynamic>{'textureId': textureId}) ?? -1,
+  );
+
+  @override
   Future<void> clearCache() => _channel.invokeMethod<void>('clearCache', <String, dynamic>{});
 
   @override
@@ -286,6 +305,10 @@ class MethodChannelVideoPlayer extends VideoPlayerPlatform {
               key: key,
               nerdStat: map['values'],
             );
+          case 'adStarted':
+            return VideoEvent(eventType: VideoEventType.adStarted, key: key);
+          case 'adEnded':
+            return VideoEvent(eventType: VideoEventType.adEnded, key: key);
 
           default:
             return VideoEvent(eventType: VideoEventType.unknown, key: key);

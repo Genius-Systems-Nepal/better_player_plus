@@ -254,6 +254,17 @@ class BetterPlayerPlugin : FlutterPlugin, ActivityAware, MethodCallHandler {
                 result.success(null)
             }
 
+            DISPOSE_AD_VIEW_METHOD -> {
+                player.removeAdsView()
+                result.success(null)
+            }
+
+            IS_AD_PLAYING_METHOD -> result.success(player.isAdPlaying())
+
+            CONTENT_DURATION_METHOD -> result.success(player.contentDuration())
+
+            CONTENT_POSITION_METHOD -> result.success(player.contentPosition())
+
             DISPOSE_METHOD -> {
                 dispose(player, textureId)
                 result.success(null)
@@ -291,6 +302,7 @@ class BetterPlayerPlugin : FlutterPlugin, ActivityAware, MethodCallHandler {
                 key,
                 "asset:///$assetLookupKey",
                 null,
+                null,
                 result,
                 headers,
                 false,
@@ -308,6 +320,7 @@ class BetterPlayerPlugin : FlutterPlugin, ActivityAware, MethodCallHandler {
             val maxCacheSize = maxCacheSizeNumber.toLong()
             val maxCacheFileSize = maxCacheFileSizeNumber.toLong()
             val uri = getParameter(dataSource, URI_PARAMETER, "")
+            val adsUri = getParameter<String?>(dataSource, ADS_URI_PARAMETER, null)
             val cacheKey = getParameter<String?>(dataSource, CACHE_KEY_PARAMETER, null)
             val formatHint = getParameter<String?>(dataSource, FORMAT_HINT_PARAMETER, null)
             val licenseUrl = getParameter<String?>(dataSource, LICENSE_URL_PARAMETER, null)
@@ -318,6 +331,7 @@ class BetterPlayerPlugin : FlutterPlugin, ActivityAware, MethodCallHandler {
                 flutterState!!.applicationContext,
                 key,
                 uri,
+                adsUri,
                 formatHint,
                 result,
                 headers,
@@ -538,6 +552,7 @@ class BetterPlayerPlugin : FlutterPlugin, ActivityAware, MethodCallHandler {
         private const val ASSET_PARAMETER = "asset"
         private const val PACKAGE_PARAMETER = "package"
         private const val URI_PARAMETER = "uri"
+        private const val ADS_URI_PARAMETER = "ads_url"
         private const val FORMAT_HINT_PARAMETER = "formatHint"
         private const val TEXTURE_ID_PARAMETER = "textureId"
         private const val LOOPING_PARAMETER = "looping"
@@ -593,5 +608,9 @@ class BetterPlayerPlugin : FlutterPlugin, ActivityAware, MethodCallHandler {
         private const val PRE_CACHE_METHOD = "preCache"
         private const val STOP_PRE_CACHE_METHOD = "stopPreCache"
         private const val NERD_STAT_METHOD = "nerdStat"
+        private const val DISPOSE_AD_VIEW_METHOD = "disposeAdView"
+        private const val IS_AD_PLAYING_METHOD = "isAdPlaying"
+        private const val CONTENT_DURATION_METHOD = "contentDuration"
+        private const val CONTENT_POSITION_METHOD = "contentPosition"
     }
 }

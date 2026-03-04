@@ -13,6 +13,7 @@ class BetterPlayerDataSource {
   BetterPlayerDataSource(
     this.type,
     this.url, {
+    this.adsUrl,
     this.bytes,
     this.subtitles,
     this.liveStream = false,
@@ -40,6 +41,7 @@ class BetterPlayerDataSource {
   ///Bytes parameter is not used in this data source.
   factory BetterPlayerDataSource.network(
     String url, {
+    String? adsUrl,
     List<BetterPlayerSubtitlesSource>? subtitles,
     bool? liveStream,
     Map<String, String>? headers,
@@ -59,6 +61,7 @@ class BetterPlayerDataSource {
   }) => BetterPlayerDataSource(
     BetterPlayerDataSourceType.network,
     url,
+    adsUrl: adsUrl,
     subtitles: subtitles,
     liveStream: liveStream,
     headers: headers,
@@ -79,6 +82,7 @@ class BetterPlayerDataSource {
   ///Bytes parameter is not used in this data source.
   factory BetterPlayerDataSource.file(
     String url, {
+    String? adsUrl,
     List<BetterPlayerSubtitlesSource>? subtitles,
     bool? useAsmsSubtitles,
     bool? useAsmsTracks,
@@ -90,6 +94,7 @@ class BetterPlayerDataSource {
   }) => BetterPlayerDataSource(
     BetterPlayerDataSourceType.file,
     url,
+    adsUrl: adsUrl,
     subtitles: subtitles,
     useAsmsSubtitles: useAsmsSubtitles,
     useAsmsTracks: useAsmsTracks,
@@ -137,6 +142,9 @@ class BetterPlayerDataSource {
 
   ///Url of the video
   final String url;
+
+  ///Optional ads url or ad tag.
+  final String? adsUrl;
 
   ///Subtitles configuration
   final List<BetterPlayerSubtitlesSource>? subtitles;
@@ -200,6 +208,7 @@ class BetterPlayerDataSource {
   BetterPlayerDataSource copyWith({
     BetterPlayerDataSourceType? type,
     String? url,
+    String? adsUrl,
     List<int>? bytes,
     List<BetterPlayerSubtitlesSource>? subtitles,
     bool? liveStream,
@@ -221,6 +230,7 @@ class BetterPlayerDataSource {
   }) => BetterPlayerDataSource(
     type ?? this.type,
     url ?? this.url,
+    adsUrl: adsUrl ?? this.adsUrl,
     bytes: bytes ?? this.bytes,
     subtitles: subtitles ?? this.subtitles,
     liveStream: liveStream ?? this.liveStream,

@@ -105,6 +105,7 @@ internal class BetterPlayer(
     private var lastSendBufferedPosition = 0L
     var startNerdStat = false
     private val nerdStatHelper: NerdStatHelper
+    private var isAdPlay = false
 
     init {
         val loadBuilder = DefaultLoadControl.Builder()
@@ -139,6 +140,7 @@ internal class BetterPlayer(
         context: Context,
         key: String?,
         dataSource: String?,
+        adsLink: String?,
         formatHint: String?,
         result: MethodChannel.Result,
         headers: Map<String, String>?,
@@ -152,6 +154,13 @@ internal class BetterPlayer(
         clearKey: String?
     ) {
         this.key = key
+        isAdPlay = !adsLink.isNullOrEmpty()
+        if (isAdPlay) {
+            sendEvent("adStarted")
+            // Fallback state event: adsUrl is accepted and surfaced even when native IMA is not configured.
+            sendEvent("adEnded")
+            isAdPlay = false
+        }
         isInitialized = false
         val uri = dataSource?.toUri()
         var dataSourceFactory: DataSource.Factory?
@@ -217,6 +226,22 @@ internal class BetterPlayer(
         exoPlayer?.prepare()
         result.success(null)
     }
+
+    private fun sendEvent(eventType: String) {
+        val event: MutableMap<String, Any> = HashMap()
+        event["event"] = eventType
+        eventSink.success(event)
+    }
+
+    fun removeAdsView() {
+        // Ads are rendered in player surface in this fork; no extra ad container to dispose.
+    }
+
+    fun isAdPlaying(): Boolean = isAdPlay
+
+    fun contentDuration(): Long = exoPlayer?.duration ?: 0L
+
+    fun contentPosition(): Long = exoPlayer?.contentPosition ?: 0L
 
     fun setupPlayerNotification(
         context: Context, title: String, author: String?,

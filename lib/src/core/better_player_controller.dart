@@ -421,6 +421,7 @@ class BetterPlayerController {
       case BetterPlayerDataSourceType.network:
         await videoPlayerController?.setNetworkDataSource(
           betterPlayerDataSource.url,
+          adsUrl: betterPlayerDataSource.adsUrl,
           headers: _getHeaders(),
           useCache: _betterPlayerDataSource!.cacheConfiguration?.useCache ?? false,
           maxCacheSize: _betterPlayerDataSource!.cacheConfiguration?.maxCacheSize ?? 0,
@@ -908,19 +909,21 @@ class BetterPlayerController {
   }
 
   ///Set different resolution (quality) for video
-  Future<void> setResolution(String url) async {
+  Future<void> setResolution(String url, String? adsUrl) async {
     if (videoPlayerController == null) {
       throw StateError('The data source has not been initialized');
     }
     final position = await videoPlayerController!.position;
     final wasPlayingBeforeChange = isPlaying()!;
     await pause();
-    await setupDataSource(betterPlayerDataSource!.copyWith(url: url));
+    await setupDataSource(betterPlayerDataSource!.copyWith(url: url, adsUrl: adsUrl));
     await seekTo(position!);
     if (wasPlayingBeforeChange) {
       await play();
     }
-    _postEvent(BetterPlayerEvent(BetterPlayerEventType.changedResolution, parameters: <String, dynamic>{'url': url}));
+    _postEvent(
+      BetterPlayerEvent(BetterPlayerEventType.changedResolution, parameters: <String, dynamic>{'url': url, 'ads_uri': adsUrl}),
+    );
   }
 
   ///Setup translations for given locale. In normal use cases it shouldn't be
@@ -1112,6 +1115,10 @@ class BetterPlayerController {
             parameters: <String, dynamic>{'nerdStat': event.nerdStat},
           ),
         );
+      case VideoEventType.adStarted:
+        _postEvent(BetterPlayerEvent(BetterPlayerEventType.adStarted));
+      case VideoEventType.adEnded:
+        _postEvent(BetterPlayerEvent(BetterPlayerEventType.adEnded));
       default:
         break;
     }
@@ -1187,6 +1194,7 @@ class BetterPlayerController {
     final dataSource = DataSource(
       sourceType: DataSourceType.network,
       uri: betterPlayerDataSource.url,
+      adsUri: betterPlayerDataSource.adsUrl,
       useCache: true,
       headers: betterPlayerDataSource.headers,
       maxCacheSize: cacheConfig.maxCacheSize,
