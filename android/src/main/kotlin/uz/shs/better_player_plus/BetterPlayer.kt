@@ -103,6 +103,8 @@ internal class BetterPlayer(
     private val customDefaultLoadControl: CustomDefaultLoadControl =
         customDefaultLoadControl ?: CustomDefaultLoadControl()
     private var lastSendBufferedPosition = 0L
+    var startNerdStat = false
+    private val nerdStatHelper: NerdStatHelper
 
     init {
         val loadBuilder = DefaultLoadControl.Builder()
@@ -119,7 +121,17 @@ internal class BetterPlayer(
             .build()
         workManager = WorkManager.getInstance(context)
         workerObserverMap = HashMap()
+        nerdStatHelper = NerdStatHelper(exoPlayer, eventSink, context)
         setupVideoPlayer(eventChannel, textureEntry, result)
+    }
+
+    fun toggleNerdStat() {
+        startNerdStat = !startNerdStat
+        if (startNerdStat) {
+            nerdStatHelper.init()
+        } else {
+            nerdStatHelper.onStop()
+        }
     }
 
     @OptIn(UnstableApi::class)
@@ -751,6 +763,7 @@ internal class BetterPlayer(
     }
 
     fun dispose() {
+        nerdStatHelper.onStop()
         disposeMediaSession()
         disposeRemoteNotifications()
         if (isInitialized) {

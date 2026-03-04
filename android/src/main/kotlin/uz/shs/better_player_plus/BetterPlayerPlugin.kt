@@ -246,6 +246,12 @@ class BetterPlayerPlugin : FlutterPlugin, ActivityAware, MethodCallHandler {
                 if (mixWitOthers != null) {
                     player.setMixWithOthers(mixWitOthers)
                 }
+                result.success(null)
+            }
+
+            NERD_STAT_METHOD -> {
+                player.toggleNerdStat()
+                result.success(null)
             }
 
             DISPOSE_METHOD -> {
@@ -586,5 +592,6 @@ class BetterPlayerPlugin : FlutterPlugin, ActivityAware, MethodCallHandler {
         private const val DISPOSE_METHOD = "dispose"
         private const val PRE_CACHE_METHOD = "preCache"
         private const val STOP_PRE_CACHE_METHOD = "stopPreCache"
+        private const val NERD_STAT_METHOD = "nerdStat"
     }
 }

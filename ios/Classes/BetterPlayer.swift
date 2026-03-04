@@ -32,9 +32,12 @@ public class BetterPlayer: NSObject, FlutterPlatformView, FlutterStreamHandler, 
     public var playerRate: Float = 1.0
     public var overriddenDuration: Int = 0
     public var lastAvPlayerTimeControlStatus: AVPlayer.TimeControlStatus? = nil
+    public var isNerdStatEnabled: Bool = false
 
     private var pipController: AVPictureInPictureController?
     private var restoreUIOnPipStop: ((Bool) -> Void)?
+    private let nerdStatHelper = NerdStatHelper()
+    private var nerdStatTimer: Timer?
 
     public override init() {
         self.player = AVPlayer()
@@ -441,6 +444,29 @@ public class BetterPlayer: NSObject, FlutterPlatformView, FlutterStreamHandler, 
         }
     }
 
+    public func toggleNerdStat() {
+        isNerdStatEnabled = !isNerdStatEnabled
+        if isNerdStatEnabled {
+            startNerdStatTimer()
+        } else {
+            stopNerdStatTimer()
+        }
+    }
+
+    private func startNerdStatTimer() {
+        stopNerdStatTimer()
+        nerdStatTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+            guard let self = self, self.isNerdStatEnabled else { return }
+            let text = self.nerdStatHelper.getNerdStatText(player: self.player)
+            self.eventSink?(["event": "nerdStat", "values": text])
+        }
+    }
+
+    private func stopNerdStatTimer() {
+        nerdStatTimer?.invalidate()
+        nerdStatTimer = nil
+    }
+
     public func setTrackParameters(width: Int, height: Int, bitrate: Int) {
         player.currentItem?.preferredPeakBitRate = Double(bitrate)
         if #available(iOS 11.0, *) {
@@ -575,6 +601,8 @@ public class BetterPlayer: NSObject, FlutterPlatformView, FlutterStreamHandler, 
     }
 
     public func clear() {
+        stopNerdStatTimer()
+        isNerdStatEnabled = false
         isInitialized = false
         isPlaying = false
         disposed = false
@@ -594,6 +622,7 @@ public class BetterPlayer: NSObject, FlutterPlatformView, FlutterStreamHandler, 
     public func dispose() {
         pause()
         disposeSansEventChannel()
+        stopNerdStatTimer()
         eventChannel?.setStreamHandler(nil)
         disablePictureInPicture()
         setPictureInPicture(false)

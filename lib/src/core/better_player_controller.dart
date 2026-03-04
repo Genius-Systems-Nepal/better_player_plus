@@ -664,6 +664,14 @@ class BetterPlayerController {
     );
   }
 
+  ///Toggle nerd stats in native player.
+  Future<void> nerdStat() async {
+    if (videoPlayerController == null) {
+      throw StateError('The data source has not been initialized');
+    }
+    await videoPlayerController?.nerdStat();
+  }
+
   ///Flag which determines whenever player is playing or not.
   bool? isPlaying() {
     if (videoPlayerController == null) {
@@ -1097,6 +1105,13 @@ class BetterPlayerController {
         );
       case VideoEventType.bufferingEnd:
         _postEvent(BetterPlayerEvent(BetterPlayerEventType.bufferingEnd));
+      case VideoEventType.nerdStat:
+        _postEvent(
+          BetterPlayerEvent(
+            BetterPlayerEventType.nerdStat,
+            parameters: <String, dynamic>{'nerdStat': event.nerdStat},
+          ),
+        );
       default:
         break;
     }

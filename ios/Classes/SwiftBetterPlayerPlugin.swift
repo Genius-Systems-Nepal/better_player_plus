@@ -309,6 +309,9 @@ extension SwiftBetterPlayerPlugin {
             let mix = (argsMap["mixWithOthers"] as? NSNumber)?.boolValue ?? false
             player.setMixWithOthers(mix)
             result(nil)
+        case "nerdStat":
+            player.toggleNerdStat()
+            result(nil)
         case "preCache":
             let dataSource = argsMap["dataSource"] as? [String: Any] ?? [:]
             let urlArg = dataSource["uri"] as? String

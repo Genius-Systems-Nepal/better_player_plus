@@ -33,6 +33,7 @@ class VideoPlayerValue {
     this.speed = 1.0,
     this.errorDescription,
     this.isPip = false,
+    this.nerdStatValue = '',
   });
 
   /// Returns an instance with a `null` [Duration].
@@ -86,6 +87,9 @@ class VideoPlayerValue {
   ///Is in Picture in Picture Mode
   final bool isPip;
 
+  ///Nerd stat text sent from native layer.
+  final String nerdStatValue;
+
   /// Indicates whether or not the video has been loaded and is ready to play.
   bool get initialized => duration != null;
 
@@ -121,6 +125,7 @@ class VideoPlayerValue {
     String? errorDescription,
     double? speed,
     bool? isPip,
+    String? nerdStatValue,
   }) => VideoPlayerValue(
     duration: duration ?? this.duration,
     size: size ?? this.size,
@@ -134,6 +139,7 @@ class VideoPlayerValue {
     speed: speed ?? this.speed,
     errorDescription: errorDescription ?? this.errorDescription,
     isPip: isPip ?? this.isPip,
+    nerdStatValue: nerdStatValue ?? this.nerdStatValue,
   );
 
   @override
@@ -231,6 +237,8 @@ class VideoPlayerController extends ValueNotifier<VideoPlayerValue> {
           value = value.copyWith(isPip: true);
         case VideoEventType.pipStop:
           value = value.copyWith(isPip: false);
+        case VideoEventType.nerdStat:
+          value = value.copyWith(nerdStatValue: '${event.nerdStat ?? ''}');
         case VideoEventType.unknown:
           break;
       }
@@ -587,6 +595,10 @@ class VideoPlayerController extends ValueNotifier<VideoPlayerValue> {
 
   void setMixWithOthers(bool mixWithOthers) {
     _videoPlayerPlatform.setMixWithOthers(_textureId, mixWithOthers);
+  }
+
+  Future<void> nerdStat() async {
+    await _videoPlayerPlatform.nerdStat(_textureId);
   }
 
   static Future<void> clearCache() async => _videoPlayerPlatform.clearCache();

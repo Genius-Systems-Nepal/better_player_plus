@@ -183,6 +183,12 @@ class MethodChannelVideoPlayer extends VideoPlayerPlatform {
   );
 
   @override
+  Future<void> nerdStat(int? textureId) => _channel.invokeMethod<void>(
+    'nerdStat',
+    <String, dynamic>{'textureId': textureId},
+  );
+
+  @override
   Future<void> clearCache() => _channel.invokeMethod<void>('clearCache', <String, dynamic>{});
 
   @override
@@ -273,6 +279,13 @@ class MethodChannelVideoPlayer extends VideoPlayerPlatform {
 
           case 'pipStop':
             return VideoEvent(eventType: VideoEventType.pipStop, key: key);
+
+          case 'nerdStat':
+            return VideoEvent(
+              eventType: VideoEventType.nerdStat,
+              key: key,
+              nerdStat: map['values'],
+            );
 
           default:
             return VideoEvent(eventType: VideoEventType.unknown, key: key);
