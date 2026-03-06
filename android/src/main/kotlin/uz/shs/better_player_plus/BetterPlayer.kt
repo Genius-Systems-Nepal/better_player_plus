@@ -48,6 +48,7 @@ import androidx.media3.common.util.Util
 import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.exoplayer.analytics.AnalyticsListener
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.LoadControl
@@ -150,6 +151,7 @@ internal class BetterPlayer(
         overriddenDuration: Long,
         licenseUrl: String?,
         drmHeaders: Map<String, String>?,
+        extraParams: Map<String, String>?,
         cacheKey: String?,
         clearKey: String?
     ) {
@@ -163,6 +165,7 @@ internal class BetterPlayer(
         }
         isInitialized = false
         val uri = dataSource?.toUri()
+        val drmToken: String? = extraParams?.get("drm_token")
         var dataSourceFactory: DataSource.Factory?
         val userAgent = getUserAgent(headers)
         if (!licenseUrl.isNullOrEmpty()) {
@@ -213,15 +216,21 @@ internal class BetterPlayer(
         } else {
             dataSourceFactory = DefaultDataSource.Factory(context)
         }
-        val mediaSource = buildMediaSource(uri, dataSourceFactory, formatHint, cacheKey, context)
-        if (overriddenDuration != 0L) {
-            val clippingMediaSource = ClippingMediaSource.Builder(mediaSource)
-                .setStartPositionMs(0)
-                .setEndPositionMs(overriddenDuration * 1000)
-                .build()
-            exoPlayer?.setMediaSource(clippingMediaSource)
+        if (!licenseUrl.isNullOrEmpty() && !drmToken.isNullOrEmpty() && uri != null) {
+            val drmHelper = DrmHelper()
+            val drmMediaSource = drmHelper.buildDrmMediaSource(uri, context, drmToken, licenseUrl)
+            exoPlayer?.setMediaSource(drmMediaSource)
         } else {
-            exoPlayer?.setMediaSource(mediaSource)
+            val mediaSource = buildMediaSource(uri, dataSourceFactory, formatHint, cacheKey, context)
+            if (overriddenDuration != 0L) {
+                val clippingMediaSource = ClippingMediaSource.Builder(mediaSource)
+                    .setStartPositionMs(0)
+                    .setEndPositionMs(overriddenDuration * 1000)
+                    .build()
+                exoPlayer?.setMediaSource(clippingMediaSource)
+            } else {
+                exoPlayer?.setMediaSource(mediaSource)
+            }
         }
         exoPlayer?.prepare()
         result.success(null)
@@ -498,6 +507,16 @@ internal class BetterPlayer(
         surface = Surface(textureEntry.surfaceTexture())
         exoPlayer?.setVideoSurface(surface)
         setAudioAttributes(exoPlayer, true)
+        exoPlayer?.addAnalyticsListener(object : AnalyticsListener {
+            override fun onBandwidthEstimate(
+                eventTime: AnalyticsListener.EventTime,
+                totalLoadTimeMs: Int,
+                totalBytesLoaded: Long,
+                bitrateEstimate: Long
+            ) {
+                sendBitrate(bitrateEstimate)
+            }
+        })
         exoPlayer?.addListener(object : Player.Listener {
             override fun onPlaybackStateChanged(playbackState: Int) {
                 when (playbackState) {
@@ -551,6 +570,13 @@ internal class BetterPlayer(
             eventSink.success(event)
             lastSendBufferedPosition = bufferedPosition
         }
+    }
+
+    fun sendBitrate(bitrate: Long) {
+        val event: MutableMap<String, Any> = HashMap()
+        event["event"] = "bitrateUpdate"
+        event["values"] = bitrate
+        eventSink.success(event)
     }
 
     @Suppress("DEPRECATION")

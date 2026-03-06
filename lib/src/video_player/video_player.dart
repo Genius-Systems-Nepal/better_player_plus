@@ -34,6 +34,7 @@ class VideoPlayerValue {
     this.errorDescription,
     this.isPip = false,
     this.nerdStatValue = '',
+    this.bitrateValue = 0,
   });
 
   /// Returns an instance with a `null` [Duration].
@@ -90,6 +91,9 @@ class VideoPlayerValue {
   ///Nerd stat text sent from native layer.
   final String nerdStatValue;
 
+  ///Current bitrate estimate from native layer.
+  final int bitrateValue;
+
   /// Indicates whether or not the video has been loaded and is ready to play.
   bool get initialized => duration != null;
 
@@ -126,6 +130,7 @@ class VideoPlayerValue {
     double? speed,
     bool? isPip,
     String? nerdStatValue,
+    int? bitrateValue,
   }) => VideoPlayerValue(
     duration: duration ?? this.duration,
     size: size ?? this.size,
@@ -140,6 +145,7 @@ class VideoPlayerValue {
     errorDescription: errorDescription ?? this.errorDescription,
     isPip: isPip ?? this.isPip,
     nerdStatValue: nerdStatValue ?? this.nerdStatValue,
+    bitrateValue: bitrateValue ?? this.bitrateValue,
   );
 
   @override
@@ -239,6 +245,8 @@ class VideoPlayerController extends ValueNotifier<VideoPlayerValue> {
           value = value.copyWith(isPip: false);
         case VideoEventType.nerdStat:
           value = value.copyWith(nerdStatValue: '${event.nerdStat ?? ''}');
+        case VideoEventType.bitrateUpdate:
+          value = value.copyWith(bitrateValue: event.bitrateUpdate);
         case VideoEventType.adStarted:
         case VideoEventType.adEnded:
         case VideoEventType.unknown:
@@ -318,6 +326,7 @@ class VideoPlayerController extends ValueNotifier<VideoPlayerValue> {
     String? licenseUrl,
     String? certificateUrl,
     Map<String, String>? drmHeaders,
+    Map<String, String>? extraParams,
     String? activityName,
     String? clearKey,
     String? videoExtension,
@@ -341,6 +350,7 @@ class VideoPlayerController extends ValueNotifier<VideoPlayerValue> {
       licenseUrl: licenseUrl,
       certificateUrl: certificateUrl,
       drmHeaders: drmHeaders,
+      extraParams: extraParams,
       activityName: activityName,
       clearKey: clearKey,
       videoExtension: videoExtension,

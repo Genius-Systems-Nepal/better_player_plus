@@ -7,7 +7,7 @@ import 'package:better_player_plus/src/subtitles/better_player_subtitles_source_
 class BetterPlayerSubtitlesSource {
   BetterPlayerSubtitlesSource({
     this.type,
-    this.name = 'Default subtitles',
+    this.name = 'Off',
     this.urls,
     this.content,
     this.selectedByDefault,
@@ -51,7 +51,7 @@ class BetterPlayerSubtitlesSource {
   ///Creates list with only one subtitles
   static List<BetterPlayerSubtitlesSource> single({
     BetterPlayerSubtitlesSourceType? type,
-    String name = 'Default subtitles',
+    String name = 'Off',
     String? url,
     String? content,
     bool? selectedByDefault,

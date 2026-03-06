@@ -9,6 +9,7 @@ class BetterPlayerDrmConfiguration {
     this.certificateUrl,
     this.headers,
     this.clearKey,
+    this.extraParams,
   });
 
   ///Type of DRM
@@ -28,4 +29,7 @@ class BetterPlayerDrmConfiguration {
 
   ///Additional headers send with auth request, used only for WIDEVINE DRM
   final Map<String, String>? headers;
+
+  ///Additional parameters passed to native DRM implementations.
+  final Map<String, String>? extraParams;
 }

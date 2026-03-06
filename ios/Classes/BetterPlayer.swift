@@ -15,6 +15,7 @@ private var presentationSizeContext = 0
 public class BetterPlayer: NSObject, FlutterPlatformView, FlutterStreamHandler, AVPictureInPictureControllerDelegate, IMAAdsLoaderDelegate, IMAAdsManagerDelegate {
     public private(set) var player: AVPlayer
     public private(set) var loaderDelegate: BetterPlayerEzDrmAssetsLoaderDelegate?
+    public private(set) var vuDrmAssetsLoaderDelegate: BetterPlayerVuDrmAssetsLoaderDelegate?
     public var eventChannel: FlutterEventChannel?
     public var eventSink: FlutterEventSink?
     public var preferredTransform: CGAffineTransform = .identity
@@ -43,6 +44,7 @@ public class BetterPlayer: NSObject, FlutterPlatformView, FlutterStreamHandler, 
     public var thisView: BetterPlayerView
     public var hasRequestedAds: Bool = false
     public var adRequestRetryCount: Int = 0
+    public var lastBitRate: Double = 0
 
     private var pipController: AVPictureInPictureController?
     private var restoreUIOnPipStop: ((Bool) -> Void)?
@@ -85,6 +87,12 @@ public class BetterPlayer: NSObject, FlutterPlatformView, FlutterStreamHandler, 
             item.addObserver(self, forKeyPath: "playbackBufferEmpty", options: [], context: &playbackBufferEmptyContext)
             item.addObserver(self, forKeyPath: "playbackBufferFull", options: [], context: &playbackBufferFullContext)
             NotificationCenter.default.addObserver(self, selector: #selector(itemDidPlayToEndTime(_:)), name: .AVPlayerItemDidPlayToEndTime, object: item)
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(handleAVPlayerAccess(_:)),
+                name: .AVPlayerItemNewAccessLogEntry,
+                object: nil
+            )
             observersAdded = true
         }
     }
@@ -113,6 +121,16 @@ public class BetterPlayer: NSObject, FlutterPlatformView, FlutterStreamHandler, 
                 eventSink(["event": "completed", "key": key as Any])
                 removeObservers()
             }
+        }
+    }
+
+    @objc private func handleAVPlayerAccess(_ notification: Notification) {
+        guard let item = notification.object as? AVPlayerItem else { return }
+        guard let lastEvent = item.accessLog()?.events.last else { return }
+        let indicatedBitrate = lastEvent.indicatedBitrate
+        if indicatedBitrate != lastBitRate {
+            lastBitRate = indicatedBitrate
+            eventSink?(["event": "bitrateUpdate", "values": Int(indicatedBitrate)])
         }
     }
 
@@ -164,14 +182,27 @@ public class BetterPlayer: NSObject, FlutterPlatformView, FlutterStreamHandler, 
         return transform
     }
 
-    public func setDataSourceAsset(_ assetPath: String, key: String?, certificateUrl: String?, licenseUrl: String?, cacheKey: String?, cacheManager: CacheManager, overriddenDuration: Int) {
+    public func setDataSourceAsset(_ assetPath: String, key: String?, certificateUrl: String?, licenseUrl: String?, cacheKey: String?, cacheManager: CacheManager, overriddenDuration: Int, drmToken: String? = nil) {
         if let path = Bundle.main.path(forResource: assetPath, ofType: nil) {
             let url = URL(fileURLWithPath: path)
-            setDataSourceURL(url, key: key, certificateUrl: certificateUrl, licenseUrl: licenseUrl, headers: [:], useCache: false, cacheKey: cacheKey, cacheManager: cacheManager, overriddenDuration: overriddenDuration, videoExtension: nil, adsUrl: nil)
+            setDataSourceURL(
+                url,
+                key: key,
+                certificateUrl: certificateUrl,
+                licenseUrl: licenseUrl,
+                headers: [:],
+                useCache: false,
+                cacheKey: cacheKey,
+                cacheManager: cacheManager,
+                overriddenDuration: overriddenDuration,
+                videoExtension: nil,
+                adsUrl: nil,
+                drmToken: drmToken
+            )
         }
     }
 
-    public func setDataSourceURL(_ url: URL, key: String?, certificateUrl: String?, licenseUrl: String?, headers: [AnyHashable: Any], useCache: Bool, cacheKey: String?, cacheManager: CacheManager, overriddenDuration: Int, videoExtension: String?, adsUrl: String?) {
+    public func setDataSourceURL(_ url: URL, key: String?, certificateUrl: String?, licenseUrl: String?, headers: [AnyHashable: Any], useCache: Bool, cacheKey: String?, cacheManager: CacheManager, overriddenDuration: Int, videoExtension: String?, adsUrl: String?, drmToken: String? = nil) {
         self.overriddenDuration = 0
         adTagUrlOrAdsResponse = adsUrl ?? ""
         hasRequestedAds = false
@@ -186,7 +217,22 @@ public class BetterPlayer: NSObject, FlutterPlatformView, FlutterStreamHandler, 
             item = cacheManager.getCachingPlayerItemForNormalPlayback(url, cacheKey: _cacheKey, videoExtension: _videoExt, headers: finalHeaders as NSDictionary as! [NSObject: AnyObject]) ?? AVPlayerItem(url: url)
         } else {
             let asset = AVURLAsset(url: url, options: ["AVURLAssetHTTPHeaderFieldsKey": finalHeaders])
-            if let certificateUrl = certificateUrl, !certificateUrl.isEmpty {
+            if let drmToken = drmToken, !drmToken.isEmpty, let certificateUrl = certificateUrl {
+                let license = licenseUrl.flatMap { URL(string: $0) }
+                let delegate = BetterPlayerVuDrmAssetsLoaderDelegate(
+                    certificateURL: certificateUrl,
+                    licenseURL: license,
+                    fairPlayToken: drmToken
+                )
+                self.vuDrmAssetsLoaderDelegate = delegate
+                let qos = DispatchQoS.QoSClass.default
+                let streamQueue = DispatchQueue(
+                    label: "streamQueue.vudrm",
+                    qos: DispatchQoS(qosClass: qos, relativePriority: -1),
+                    attributes: []
+                )
+                asset.resourceLoader.setDelegate(delegate, queue: streamQueue)
+            } else if let certificateUrl = certificateUrl, !certificateUrl.isEmpty {
                 let certURL = URL(string: certificateUrl)
                 let licURL = licenseUrl.flatMap { URL(string: $0) }
                 if let certURL = certURL {
@@ -754,6 +800,8 @@ public class BetterPlayer: NSObject, FlutterPlatformView, FlutterStreamHandler, 
         adTagUrlOrAdsResponse = ""
         hasRequestedAds = false
         adRequestRetryCount = 0
+        lastBitRate = 0
+        vuDrmAssetsLoaderDelegate = nil
         adsManager?.destroy()
         adsManager = nil
         isInitialized = false

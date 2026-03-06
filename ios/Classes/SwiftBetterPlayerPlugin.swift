@@ -234,6 +234,8 @@ extension SwiftBetterPlayerPlugin {
             let maxCacheSize = dataSource["maxCacheSize"] as? NSNumber
             let videoExtension = dataSource["videoExtension"] as? String
             let adsUrl = dataSource["ads_url"] as? String
+            let extraParams = dataSource["extraParams"] as? [String: Any]
+            let drmToken = extraParams?["drm_token"] as? String
             let overriddenDuration = (dataSource["overriddenDuration"] as? NSNumber)?.intValue ?? 0
 
             let useCache = (dataSource["useCache"] as? NSNumber)?.boolValue ?? false
@@ -246,9 +248,31 @@ extension SwiftBetterPlayerPlugin {
                 } else {
                     assetPath = registrar.lookupKey(forAsset: assetArg)
                 }
-                player.setDataSourceAsset(assetPath, key: key, certificateUrl: certificateUrl, licenseUrl: licenseUrl, cacheKey: cacheKey, cacheManager: cacheManager, overriddenDuration: overriddenDuration)
+                player.setDataSourceAsset(
+                    assetPath,
+                    key: key,
+                    certificateUrl: certificateUrl,
+                    licenseUrl: licenseUrl,
+                    cacheKey: cacheKey,
+                    cacheManager: cacheManager,
+                    overriddenDuration: overriddenDuration,
+                    drmToken: drmToken
+                )
             } else if let uriArg = uriArg, let url = URL(string: uriArg) {
-                player.setDataSourceURL(url, key: key, certificateUrl: certificateUrl, licenseUrl: licenseUrl, headers: headers, useCache: useCache, cacheKey: cacheKey, cacheManager: cacheManager, overriddenDuration: overriddenDuration, videoExtension: videoExtension, adsUrl: adsUrl)
+                player.setDataSourceURL(
+                    url,
+                    key: key,
+                    certificateUrl: certificateUrl,
+                    licenseUrl: licenseUrl,
+                    headers: headers,
+                    useCache: useCache,
+                    cacheKey: cacheKey,
+                    cacheManager: cacheManager,
+                    overriddenDuration: overriddenDuration,
+                    videoExtension: videoExtension,
+                    adsUrl: adsUrl,
+                    drmToken: drmToken
+                )
             } else {
                 result(FlutterMethodNotImplemented)
                 return

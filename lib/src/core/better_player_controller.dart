@@ -437,6 +437,7 @@ class BetterPlayerController {
           licenseUrl: _betterPlayerDataSource?.drmConfiguration?.licenseUrl,
           certificateUrl: _betterPlayerDataSource?.drmConfiguration?.certificateUrl,
           drmHeaders: _betterPlayerDataSource?.drmConfiguration?.headers,
+          extraParams: _betterPlayerDataSource?.drmConfiguration?.extraParams,
           activityName: _betterPlayerDataSource?.notificationConfiguration?.activityName,
           clearKey: _betterPlayerDataSource?.drmConfiguration?.clearKey,
           videoExtension: _betterPlayerDataSource!.videoExtension,
@@ -1113,6 +1114,13 @@ class BetterPlayerController {
           BetterPlayerEvent(
             BetterPlayerEventType.nerdStat,
             parameters: <String, dynamic>{'nerdStat': event.nerdStat},
+          ),
+        );
+      case VideoEventType.bitrateUpdate:
+        _postEvent(
+          BetterPlayerEvent(
+            BetterPlayerEventType.bitrateUpdate,
+            parameters: <String, dynamic>{'bitrateUpdate': event.bitrateUpdate},
           ),
         );
       case VideoEventType.adStarted:

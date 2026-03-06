@@ -238,6 +238,7 @@ class DataSource {
     this.licenseUrl,
     this.certificateUrl,
     this.drmHeaders,
+    this.extraParams,
     this.activityName,
     this.clearKey,
     this.videoExtension,
@@ -322,6 +323,8 @@ class DataSource {
 
   final Map<String, String>? drmHeaders;
 
+  final Map<String, String>? extraParams;
+
   final String? activityName;
 
   final String? clearKey;
@@ -403,6 +406,7 @@ class VideoEvent {
     this.buffered,
     this.position,
     this.nerdStat,
+    this.bitrateUpdate = 0,
   });
 
   /// The type of the event.
@@ -433,6 +437,9 @@ class VideoEvent {
 
   ///Nerd stat text payload.
   final dynamic nerdStat;
+
+  ///Bitrate update payload.
+  final int bitrateUpdate;
 
   @override
   bool operator ==(Object other) =>
@@ -492,6 +499,9 @@ enum VideoEventType {
 
   ///Ad playback ended.
   adEnded,
+
+  ///Bitrate update event.
+  bitrateUpdate,
 
   /// An unknown event has been received.
   unknown,
