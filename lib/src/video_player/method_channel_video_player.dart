@@ -21,18 +21,28 @@ class MethodChannelVideoPlayer extends VideoPlayerPlatform {
       _channel.invokeMethod<void>('dispose', <String, dynamic>{'textureId': textureId});
 
   @override
-  Future<int?> create({BetterPlayerBufferingConfiguration? bufferingConfiguration}) async {
-    late final Map<String, dynamic>? response;
-    if (bufferingConfiguration == null) {
-      response = await _channel.invokeMapMethod<String, dynamic>('create');
-    } else {
-      final responseLinkedHashMap = await _channel.invokeMethod<Map<Object?, dynamic>?>('create', <String, dynamic>{
+  Future<int?> create({
+    BetterPlayerBufferingConfiguration? bufferingConfiguration,
+    Map<String, dynamic>? quanteecConfig,
+  }) async {
+    final Map<String, dynamic> createArgs = <String, dynamic>{};
+    if (bufferingConfiguration != null) {
+      createArgs.addAll(<String, dynamic>{
         'minBufferMs': bufferingConfiguration.minBufferMs,
         'maxBufferMs': bufferingConfiguration.maxBufferMs,
         'bufferForPlaybackMs': bufferingConfiguration.bufferForPlaybackMs,
         'bufferForPlaybackAfterRebufferMs': bufferingConfiguration.bufferForPlaybackAfterRebufferMs,
       });
+    }
+    if (quanteecConfig != null) {
+      createArgs['quanteecConfig'] = quanteecConfig;
+    }
 
+    late final Map<String, dynamic>? response;
+    if (createArgs.isEmpty) {
+      response = await _channel.invokeMapMethod<String, dynamic>('create');
+    } else {
+      final responseLinkedHashMap = await _channel.invokeMethod<Map<Object?, dynamic>?>('create', createArgs);
       response = responseLinkedHashMap != null ? Map<String, dynamic>.from(responseLinkedHashMap) : null;
     }
     return response?['textureId'] as int?;

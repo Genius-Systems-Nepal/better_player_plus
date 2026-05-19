@@ -177,6 +177,7 @@ class VideoPlayerController extends ValueNotifier<VideoPlayerValue> {
   /// Constructs a [VideoPlayerController] and creates video controller on platform side.
   VideoPlayerController({
     this.bufferingConfiguration = const BetterPlayerBufferingConfiguration(),
+    this.quanteecConfig,
     bool autoCreate = true,
   }) : super(VideoPlayerValue(duration: null)) {
     if (autoCreate) {
@@ -185,6 +186,7 @@ class VideoPlayerController extends ValueNotifier<VideoPlayerValue> {
   }
 
   final BetterPlayerBufferingConfiguration bufferingConfiguration;
+  final Map<String, dynamic>? quanteecConfig;
 
   final StreamController<VideoEvent> videoEventStreamController = StreamController.broadcast();
   final Completer<void> _creatingCompleter = Completer<void>();
@@ -205,7 +207,10 @@ class VideoPlayerController extends ValueNotifier<VideoPlayerValue> {
 
   /// Attempts to open the given [dataSource] and load metadata about the video.
   Future<void> _create() async {
-    _textureId = await _videoPlayerPlatform.create(bufferingConfiguration: bufferingConfiguration);
+    _textureId = await _videoPlayerPlatform.create(
+      bufferingConfiguration: bufferingConfiguration,
+      quanteecConfig: quanteecConfig,
+    );
     _creatingCompleter.complete(null);
 
     unawaited(_applyLooping());

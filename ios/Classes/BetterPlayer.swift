@@ -50,9 +50,15 @@ public class BetterPlayer: NSObject, FlutterPlatformView, FlutterStreamHandler, 
     private var restoreUIOnPipStop: ((Bool) -> Void)?
     private let nerdStatHelper = NerdStatHelper()
     private var nerdStatTimer: Timer?
+    private var quanteecPlugin: AnyObject?
 
-    public override init() {
+    public init(quanteecConfig: [String: Any]? = nil) {
         self.player = AVPlayer()
+        
+        if let quanteecConfig = quanteecConfig {
+            quanteecPlugin = QuanteecHelper.setup(player: player, quanteecConfig: quanteecConfig)
+        }
+        
         self.thisView = BetterPlayerView(frame: .zero)
         super.init()
         self.thisView.player = self.player
@@ -66,6 +72,10 @@ public class BetterPlayer: NSObject, FlutterPlatformView, FlutterStreamHandler, 
         self.disposed = false
         self.setUpAdsLoader()
         self.contentPlayhead = IMAAVPlayerContentPlayhead(avPlayer: self.player)
+    }
+
+    public override convenience init() {
+        self.init(quanteecConfig: nil)
     }
 
     public convenience init(frame: CGRect) {
@@ -203,6 +213,8 @@ public class BetterPlayer: NSObject, FlutterPlatformView, FlutterStreamHandler, 
     }
 
     public func setDataSourceURL(_ url: URL, key: String?, certificateUrl: String?, licenseUrl: String?, headers: [AnyHashable: Any], useCache: Bool, cacheKey: String?, cacheManager: CacheManager, overriddenDuration: Int, videoExtension: String?, adsUrl: String?, drmToken: String? = nil) {
+//         print("video url === \(url)")
+
         self.overriddenDuration = 0
         adTagUrlOrAdsResponse = adsUrl ?? ""
         hasRequestedAds = false
@@ -258,8 +270,8 @@ public class BetterPlayer: NSObject, FlutterPlatformView, FlutterStreamHandler, 
         self.isStalledCheckStarted = false
         self.playerRate = 1
         player.replaceCurrentItem(with: item)
-
-        let asset = item.asset
+        let activeItem = player.currentItem ?? item
+        let asset = activeItem.asset
         asset.loadValuesAsynchronously(forKeys: ["tracks"]) {
             if asset.statusOfValue(forKey: "tracks", error: nil) == .loaded {
                 let tracks = asset.tracks(withMediaType: .video)
@@ -269,13 +281,13 @@ public class BetterPlayer: NSObject, FlutterPlatformView, FlutterStreamHandler, 
                         if videoTrack.statusOfValue(forKey: "preferredTransform", error: nil) == .loaded {
                             self.preferredTransform = self.fixTransform(videoTrack)
                             let videoComposition = self.getVideoComposition(transform: self.preferredTransform, asset: asset, videoTrack: videoTrack)
-                            item.videoComposition = videoComposition
+                            activeItem.videoComposition = videoComposition
                         }
                     }
                 }
             }
         }
-        addObservers(item)
+        addObservers(activeItem)
     }
 
     private func handleStalled() {

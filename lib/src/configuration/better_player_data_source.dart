@@ -29,6 +29,7 @@ class BetterPlayerDataSource {
     this.videoFormat,
     this.videoExtension,
     this.drmConfiguration,
+    this.quanteecConfig,
     this.placeholder,
     this.bufferingConfiguration = const BetterPlayerBufferingConfiguration(),
   }) : assert(
@@ -56,6 +57,7 @@ class BetterPlayerDataSource {
     Duration? overriddenDuration,
     BetterPlayerVideoFormat? videoFormat,
     BetterPlayerDrmConfiguration? drmConfiguration,
+    Map<String, dynamic>? quanteecConfig,
     Widget? placeholder,
     BetterPlayerBufferingConfiguration bufferingConfiguration = const BetterPlayerBufferingConfiguration(),
   }) => BetterPlayerDataSource(
@@ -74,6 +76,7 @@ class BetterPlayerDataSource {
     overriddenDuration: overriddenDuration,
     videoFormat: videoFormat,
     drmConfiguration: drmConfiguration,
+    quanteecConfig: quanteecConfig,
     placeholder: placeholder,
     bufferingConfiguration: bufferingConfiguration,
   );
@@ -91,6 +94,7 @@ class BetterPlayerDataSource {
     BetterPlayerNotificationConfiguration? notificationConfiguration,
     Duration? overriddenDuration,
     Widget? placeholder,
+    Map<String, dynamic>? quanteecConfig,
   }) => BetterPlayerDataSource(
     BetterPlayerDataSourceType.file,
     url,
@@ -105,6 +109,7 @@ class BetterPlayerDataSource {
     ),
     overriddenDuration: overriddenDuration,
     placeholder: placeholder,
+    quanteecConfig: quanteecConfig,
   );
 
   ///Factory method to build network data source which uses bytes as data source.
@@ -195,6 +200,9 @@ class BetterPlayerDataSource {
   ///Configuration of content protection
   final BetterPlayerDrmConfiguration? drmConfiguration;
 
+  ///Optional QUANTEEC player configuration.
+  final Map<String, dynamic>? quanteecConfig;
+
   ///Placeholder widget which will be shown until video load or play. This
   ///placeholder may be useful if you want to show placeholder before each video
   ///in playlist. Otherwise, you should use placeholder from
@@ -225,6 +233,7 @@ class BetterPlayerDataSource {
     BetterPlayerVideoFormat? videoFormat,
     String? videoExtension,
     BetterPlayerDrmConfiguration? drmConfiguration,
+    Map<String, dynamic>? quanteecConfig,
     Widget? placeholder,
     BetterPlayerBufferingConfiguration? bufferingConfiguration = const BetterPlayerBufferingConfiguration(),
   }) => BetterPlayerDataSource(
@@ -245,6 +254,7 @@ class BetterPlayerDataSource {
     videoFormat: videoFormat ?? this.videoFormat,
     videoExtension: videoExtension ?? this.videoExtension,
     drmConfiguration: drmConfiguration ?? this.drmConfiguration,
+    quanteecConfig: quanteecConfig ?? this.quanteecConfig,
     placeholder: placeholder ?? this.placeholder,
     bufferingConfiguration: bufferingConfiguration ?? this.bufferingConfiguration,
   );

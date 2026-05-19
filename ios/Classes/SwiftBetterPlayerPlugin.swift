@@ -209,7 +209,9 @@ extension SwiftBetterPlayerPlugin {
             return
         }
         if call.method == "create" {
-            let player = BetterPlayer(frame: .zero)
+            let argsMap = call.arguments as? [String: Any]
+            let quanteecConfig = argsMap?["quanteecConfig"] as? [String: Any]
+            let player = BetterPlayer(quanteecConfig: quanteecConfig)
             onPlayerSetup(player, result: result)
             return
         }
