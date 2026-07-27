@@ -1,6 +1,7 @@
 package uz.shs.better_player_plus
 
 import android.annotation.SuppressLint
+import android.app.Activity
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -29,6 +30,8 @@ import androidx.media3.ui.PlayerNotificationManager.BitmapCallback
 import androidx.work.OneTimeWorkRequest
 import android.util.Log
 import android.view.Surface
+import android.view.ViewGroup
+import android.widget.FrameLayout
 import androidx.annotation.OptIn
 import androidx.lifecycle.Observer
 import androidx.media3.extractor.DefaultExtractorsFactory
@@ -63,12 +66,19 @@ import androidx.media3.exoplayer.drm.HttpMediaDrmCallback
 import androidx.media3.exoplayer.drm.LocalMediaDrmCallback
 import androidx.media3.exoplayer.drm.UnsupportedDrmException
 import androidx.media3.exoplayer.hls.HlsMediaSource
+import androidx.media3.exoplayer.ima.ImaAdsLoader
 import androidx.media3.exoplayer.smoothstreaming.DefaultSsChunkSource
 import androidx.media3.exoplayer.smoothstreaming.SsMediaSource
 import androidx.media3.exoplayer.source.ClippingMediaSource
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
+import com.google.ads.interactivemedia.v3.api.AdEvent
+import com.quanteec.plugin.settings.QuanteecConfig
+import com.quanteec.media3exoplayer.QuanteecBaseDataSource
+import com.quanteec.media3exoplayer.adapters.QuanteecBandwidthMeters
+import com.quanteec.media3exoplayer.adapters.QuanteecMedia3ExoCore
 import java.io.File
 import java.lang.Exception
 import java.lang.IllegalStateException
@@ -80,10 +90,12 @@ import androidx.core.net.toUri
 @UnstableApi
 internal class BetterPlayer(
     context: Context,
+    private val activity: Activity?,
     private val eventChannel: EventChannel,
     private val textureEntry: SurfaceTextureEntry,
     customDefaultLoadControl: CustomDefaultLoadControl?,
-    result: MethodChannel.Result
+    result: MethodChannel.Result,
+    quanteecConfigData: Map<String, Any?>? = null
 ) {
     private val exoPlayer: ExoPlayer?
     private val eventSink = QueuingEventSink()
@@ -107,6 +119,12 @@ internal class BetterPlayer(
     var startNerdStat = false
     private val nerdStatHelper: NerdStatHelper
     private var isAdPlay = false
+    private val adsLoader: ImaAdsLoader?
+    private val adsLayout: FrameLayout?
+    private val defaultMediaSourceFactory: DefaultMediaSourceFactory
+    private var quanteecConfig: QuanteecConfig? = null
+    private var quanteecCore: QuanteecMedia3ExoCore? = null
+    private var quanteecBandwidthMeters: QuanteecBandwidthMeters? = null
 
     init {
         val loadBuilder = DefaultLoadControl.Builder()
@@ -117,10 +135,69 @@ internal class BetterPlayer(
             this.customDefaultLoadControl.bufferForPlaybackAfterRebufferMs
         )
         loadControl = loadBuilder.build()
-        exoPlayer = ExoPlayer.Builder(context)
-            .setTrackSelector(trackSelector)
-            .setLoadControl(loadControl)
-            .build()
+
+        val quanteecDataSourceFactory = setupQuanteec(context, quanteecConfigData)
+        val baseDataSourceFactory: DataSource.Factory =
+            quanteecDataSourceFactory ?: DefaultDataSource.Factory(context)
+
+        if (activity != null) {
+            adsLayout = FrameLayout(activity)
+            adsLoader = ImaAdsLoader.Builder(context)
+                .setAdEventListener { adEvent ->
+                    when (adEvent.type) {
+                        AdEvent.AdEventType.CONTENT_PAUSE_REQUESTED -> {
+                            isAdPlay = true
+                            sendEvent("adStarted")
+                        }
+                        AdEvent.AdEventType.CONTENT_RESUME_REQUESTED,
+                        AdEvent.AdEventType.AD_BREAK_ENDED,
+                        AdEvent.AdEventType.COMPLETED,
+                        AdEvent.AdEventType.SKIPPED -> {
+                            isAdPlay = false
+                            removeAdsView()
+                            sendEvent("adEnded")
+                        }
+                        AdEvent.AdEventType.AD_BREAK_FETCH_ERROR -> {
+                            isAdPlay = false
+                            removeAdsView()
+                            sendEvent("adEnded")
+                        }
+                        else -> Unit
+                    }
+                }
+                .setAdErrorListener {
+                    isAdPlay = false
+                    removeAdsView()
+                    sendEvent("adEnded")
+                }
+                .build()
+            defaultMediaSourceFactory = DefaultMediaSourceFactory(baseDataSourceFactory)
+                .setLocalAdInsertionComponents(
+                    { adsLoader },
+                    {
+                        attachAdsLayout()
+                        adsLayout
+                    }
+                )
+            val playerBuilder = ExoPlayer.Builder(context)
+                .setTrackSelector(trackSelector)
+                .setLoadControl(loadControl)
+                .setMediaSourceFactory(defaultMediaSourceFactory)
+            quanteecBandwidthMeters?.let { playerBuilder.setBandwidthMeter(it) }
+            exoPlayer = playerBuilder.build()
+            adsLoader.setPlayer(exoPlayer)
+        } else {
+            adsLayout = null
+            adsLoader = null
+            defaultMediaSourceFactory = DefaultMediaSourceFactory(baseDataSourceFactory)
+            val playerBuilder = ExoPlayer.Builder(context)
+                .setTrackSelector(trackSelector)
+                .setLoadControl(loadControl)
+                .setMediaSourceFactory(defaultMediaSourceFactory)
+            quanteecBandwidthMeters?.let { playerBuilder.setBandwidthMeter(it) }
+            exoPlayer = playerBuilder.build()
+        }
+
         workManager = WorkManager.getInstance(context)
         workerObserverMap = HashMap()
         nerdStatHelper = NerdStatHelper(exoPlayer, eventSink, context)
@@ -156,16 +233,14 @@ internal class BetterPlayer(
         clearKey: String?
     ) {
         this.key = key
-        isAdPlay = !adsLink.isNullOrEmpty()
-        if (isAdPlay) {
-            sendEvent("adStarted")
-            // Fallback state event: adsUrl is accepted and surfaced even when native IMA is not configured.
-            sendEvent("adEnded")
-            isAdPlay = false
-        }
+        isAdPlay = false
         isInitialized = false
         val uri = dataSource?.toUri()
-        val drmToken: String? = extraParams?.get("drm_token")
+        val adsUri = adsLink?.takeIf { it.isNotBlank() }?.toUri()
+        val drmToken: String? = extraParams
+            ?.get("drm_token")
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() && !it.equals("null", ignoreCase = true) }
         var dataSourceFactory: DataSource.Factory?
         val userAgent = getUserAgent(headers)
         if (!licenseUrl.isNullOrEmpty()) {
@@ -176,30 +251,40 @@ internal class BetterPlayer(
                     httpMediaDrmCallback.setKeyRequestProperty(drmKey, drmValue)
                 }
             }
-            val drmSchemeUuid = Util.getDrmUuid("widevine")
-            if (drmSchemeUuid != null) {
-                drmSessionManager = DefaultDrmSessionManager.Builder()
-                    .setUuidAndExoMediaDrmProvider(
-                        drmSchemeUuid
-                    ) { uuid: UUID? ->
-                        try {
-                            val mediaDrm = FrameworkMediaDrm.newInstance(uuid!!)
-                            // Force L3.
-                            mediaDrm.setPropertyString("securityLevel", "L3")
-                            return@setUuidAndExoMediaDrmProvider mediaDrm
-                        } catch (_: UnsupportedDrmException) {
-                            return@setUuidAndExoMediaDrmProvider DummyExoMediaDrm()
+            if (Util.SDK_INT < 18) {
+                Log.e(TAG, "Protected content not supported on API levels below 18")
+                drmSessionManager = null
+            } else {
+                val drmSchemeUuid = Util.getDrmUuid("widevine")
+                if (drmSchemeUuid != null) {
+                    drmSessionManager = DefaultDrmSessionManager.Builder()
+                        .setUuidAndExoMediaDrmProvider(
+                            drmSchemeUuid
+                        ) { uuid: UUID? ->
+                            try {
+                                val mediaDrm = FrameworkMediaDrm.newInstance(uuid!!)
+                                // Force L3.
+                                mediaDrm.setPropertyString("securityLevel", "L3")
+                                return@setUuidAndExoMediaDrmProvider mediaDrm
+                            } catch (_: UnsupportedDrmException) {
+                                return@setUuidAndExoMediaDrmProvider DummyExoMediaDrm()
+                            }
                         }
-                    }
-                    .setMultiSession(false)
-                    .build(httpMediaDrmCallback)
+                        .setMultiSession(false)
+                        .build(httpMediaDrmCallback)
+                }
             }
         } else if (!clearKey.isNullOrEmpty()) {
-            DefaultDrmSessionManager.Builder()
-                .setUuidAndExoMediaDrmProvider(
-                    C.CLEARKEY_UUID,
-                    FrameworkMediaDrm.DEFAULT_PROVIDER
-                ).build(LocalMediaDrmCallback(clearKey.toByteArray()))
+            drmSessionManager = if (Util.SDK_INT < 18) {
+                Log.e(TAG, "Protected content not supported on API levels below 18")
+                null
+            } else {
+                DefaultDrmSessionManager.Builder()
+                    .setUuidAndExoMediaDrmProvider(
+                        C.CLEARKEY_UUID,
+                        FrameworkMediaDrm.DEFAULT_PROVIDER
+                    ).build(LocalMediaDrmCallback(clearKey.toByteArray()))
+            }
         } else {
             drmSessionManager = null
         }
@@ -216,12 +301,14 @@ internal class BetterPlayer(
         } else {
             dataSourceFactory = DefaultDataSource.Factory(context)
         }
-        if (!licenseUrl.isNullOrEmpty() && !drmToken.isNullOrEmpty() && uri != null) {
+        val contentType = resolveContentType(uri, formatHint)
+        if (!licenseUrl.isNullOrEmpty() && contentType == C.CONTENT_TYPE_DASH && uri != null) {
             val drmHelper = DrmHelper()
-            val drmMediaSource = drmHelper.buildDrmMediaSource(uri, context, drmToken, licenseUrl)
+            val drmMediaSource =
+                drmHelper.buildDrmMediaSource(uri, context, drmToken, drmHeaders, licenseUrl)
             exoPlayer?.setMediaSource(drmMediaSource)
         } else {
-            val mediaSource = buildMediaSource(uri, dataSourceFactory, formatHint, cacheKey, context)
+            val mediaSource = buildMediaSource(uri, adsUri, dataSourceFactory, formatHint, cacheKey, context)
             if (overriddenDuration != 0L) {
                 val clippingMediaSource = ClippingMediaSource.Builder(mediaSource)
                     .setStartPositionMs(0)
@@ -233,7 +320,48 @@ internal class BetterPlayer(
             }
         }
         exoPlayer?.prepare()
+        exoPlayer?.let { player ->
+            quanteecCore?.setPlayer(player)
+        }
         result.success(null)
+    }
+
+    private fun setupQuanteec(
+        context: Context,
+        quanteecConfigData: Map<String, Any?>?
+    ): DataSource.Factory? {
+        if (quanteecConfigData == null) {
+            return null
+        }
+        releaseQuanteec()
+        val videoId = quanteecConfigData["videoId"] as? String ?: ""
+        val quanteecKey = (quanteecConfigData["quanteecKey"] as? String)
+            ?: (quanteecConfigData["qunateecKey"] as? String)
+            ?: ""
+        if (quanteecKey.isEmpty()) {
+            return null
+        }
+        return try {
+            quanteecConfig = QuanteecConfig.Builder(quanteecKey).setVideoID(videoId).build()
+            quanteecCore = QuanteecMedia3ExoCore(context, quanteecConfig!!)
+            quanteecBandwidthMeters = QuanteecBandwidthMeters.Builder(context).build()
+            QuanteecBaseDataSource.Factory(quanteecCore!!)
+        } catch (exception: Exception) {
+            Log.e(TAG, "Quanteec setup failed: $exception")
+            releaseQuanteec()
+            null
+        }
+    }
+
+    private fun releaseQuanteec() {
+        try {
+            quanteecCore?.release()
+        } catch (_: Exception) {
+        } finally {
+            quanteecCore = null
+            quanteecConfig = null
+            quanteecBandwidthMeters = null
+        }
     }
 
     private fun sendEvent(eventType: String) {
@@ -242,8 +370,29 @@ internal class BetterPlayer(
         eventSink.success(event)
     }
 
+    private fun attachAdsLayout() {
+        val act = activity ?: return
+        val layout = adsLayout ?: return
+        val parent = act.findViewById<ViewGroup>(android.R.id.content)
+        if (layout.parent == null) {
+            val statusBarHeight =
+                Math.ceil((25 * act.resources.displayMetrics.density).toDouble()).toInt()
+            val width = act.resources.displayMetrics.widthPixels
+            val height = (width / 1.7777777778).toInt() + statusBarHeight
+            layout.layoutParams = FrameLayout.LayoutParams(width, height)
+            parent.addView(layout)
+            layout.bringToFront()
+        }
+    }
+
     fun removeAdsView() {
-        // Ads are rendered in player surface in this fork; no extra ad container to dispose.
+        val act = activity ?: return
+        val layout = adsLayout ?: return
+        val parent = act.findViewById<ViewGroup>(android.R.id.content)
+        isAdPlay = false
+        if (layout.parent != null) {
+            parent.removeView(layout)
+        }
     }
 
     fun isAdPlaying(): Boolean = isAdPlay
@@ -416,20 +565,46 @@ internal class BetterPlayer(
         bitmap = null
     }
 
+    private fun resolveContentType(uri: Uri?, formatHint: String?): @C.ContentType Int {
+        return when (formatHint) {
+            FORMAT_SS -> C.CONTENT_TYPE_SS
+            FORMAT_DASH -> C.CONTENT_TYPE_DASH
+            FORMAT_HLS -> C.CONTENT_TYPE_HLS
+            FORMAT_OTHER -> C.CONTENT_TYPE_OTHER
+            else -> {
+                val extension = uri?.lastPathSegment?.substringAfterLast('.', "") ?: ""
+                Util.inferContentTypeForExtension(extension)
+            }
+        }
+    }
+
     private fun buildMediaSource(
         uri: Uri?,
+        adsUri: Uri?,
         mediaDataSourceFactory: DataSource.Factory,
         formatHint: String?,
         cacheKey: String?,
         context: Context
     ): MediaSource {
+        val mediaItemBuilder = MediaItem.Builder()
+        mediaItemBuilder.setUri(uri)
+        if (!cacheKey.isNullOrEmpty()) {
+            mediaItemBuilder.setCustomCacheKey(cacheKey)
+        }
+        if (adsUri != null && adsLoader != null) {
+            mediaItemBuilder.setAdsConfiguration(
+                MediaItem.AdsConfiguration.Builder(adsUri).build()
+            )
+            return defaultMediaSourceFactory.createMediaSource(mediaItemBuilder.build())
+        }
+
         val type: Int
         if (formatHint == null) {
             var lastPathSegment = uri?.lastPathSegment
             if (lastPathSegment == null) {
                 lastPathSegment = ""
             }
-            type = Util.inferContentTypeForExtension(lastPathSegment.split(".")[1])
+            type = Util.inferContentTypeForExtension(lastPathSegment.split(".").getOrElse(1) { "" })
         } else {
             type = when (formatHint) {
                 FORMAT_SS -> C.CONTENT_TYPE_SS
@@ -438,11 +613,6 @@ internal class BetterPlayer(
                 FORMAT_OTHER -> C.CONTENT_TYPE_OTHER
                 else -> -1
             }
-        }
-        val mediaItemBuilder = MediaItem.Builder()
-        mediaItemBuilder.setUri(uri)
-        if (!cacheKey.isNullOrEmpty()) {
-            mediaItemBuilder.setCustomCacheKey(cacheKey)
         }
         val mediaItem = mediaItemBuilder.build()
         val drmSessionManagerProvider: DrmSessionManagerProvider? = drmSessionManager?.let { drmSessionManager ->
@@ -551,7 +721,7 @@ internal class BetterPlayer(
             }
 
             override fun onPlayerError(error: PlaybackException) {
-                eventSink.error("VideoError", "Video player had error $error", "")
+                eventSink.error("VideoError", "Video player had error $error", "${error.errorCode}")
             }
         })
         val reply: MutableMap<String, Any> = HashMap()
@@ -815,6 +985,10 @@ internal class BetterPlayer(
 
     fun dispose() {
         nerdStatHelper.onStop()
+        releaseQuanteec()
+        removeAdsView()
+        adsLoader?.setPlayer(null)
+        adsLoader?.release()
         disposeMediaSession()
         disposeRemoteNotifications()
         if (isInitialized) {

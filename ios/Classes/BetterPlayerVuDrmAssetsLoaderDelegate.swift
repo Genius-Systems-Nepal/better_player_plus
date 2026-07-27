@@ -11,90 +11,303 @@ import AVFoundation
         self.licenseURL = licenseURL
         self.fairPlayToken = fairPlayToken
         super.init()
+        let certPreview = Self.previewCertificateValue(certificateURL ?? "")
+        let licensePreview = licenseURL?.absoluteString ?? "(nil)"
+        let hasToken = !(fairPlayToken ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        NSLog(
+            "[BetterPlayer-FairPlay] VuDRM delegate init certificateUrl=%@ licenseUrl=%@ hasToken=%@",
+            certPreview,
+            licensePreview,
+            hasToken ? "YES" : "NO"
+        )
+    }
+
+    private static func previewCertificateValue(_ value: String) -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty { return "(empty)" }
+        let lower = trimmed.lowercased()
+        if lower.hasPrefix("http://") || lower.hasPrefix("https://") {
+            return trimmed
+        }
+        let previewLength = min(32, trimmed.count)
+        let prefix = String(trimmed.prefix(previewLength))
+        return "\(prefix)... (\(trimmed.count) chars, inline base64)"
+    }
+
+    private var normalizedFairPlayToken: String? {
+        guard let token = fairPlayToken?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !token.isEmpty,
+              token.caseInsensitiveCompare("null") != .orderedSame else {
+            return nil
+        }
+        return token
+    }
+
+    private func isRemoteCertificateUrl(_ value: String) -> Bool {
+        let lower = value.lowercased()
+        return lower.hasPrefix("http://") || lower.hasPrefix("https://")
+    }
+
+    private func sanitizeInlineCertificate(_ value: String) -> String {
+        var cleaned = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        if cleaned.contains("-----BEGIN CERTIFICATE-----") {
+            cleaned = cleaned
+                .replacingOccurrences(of: "-----BEGIN CERTIFICATE-----", with: "")
+                .replacingOccurrences(of: "-----END CERTIFICATE-----", with: "")
+                .replacingOccurrences(of: "\\s+", with: "", options: .regularExpression)
+        } else {
+            cleaned = cleaned.replacingOccurrences(of: "\\s+", with: "", options: .regularExpression)
+        }
+        return cleaned
+    }
+
+    private func decodeInlineCertificate(_ value: String) -> Data? {
+        let sanitized = sanitizeInlineCertificate(value)
+        NSLog(
+            "[BetterPlayer-FairPlay] Decoding inline certificateUrl: rawLength=%d sanitizedLength=%d preview=%@",
+            value.count,
+            sanitized.count,
+            Self.previewCertificateValue(value)
+        )
+
+        if sanitized.isEmpty {
+            NSLog("[BetterPlayer-FairPlay] Inline certificate decode failed: sanitized value is empty")
+            return nil
+        }
+
+        if let decoded = Data(base64Encoded: sanitized, options: [.ignoreUnknownCharacters]), !decoded.isEmpty {
+            NSLog("[BetterPlayer-FairPlay] Inline certificate decoded via standard base64 (%d bytes)", decoded.count)
+            return decoded
+        }
+
+        let urlSafe = sanitized
+            .replacingOccurrences(of: "-", with: "+")
+            .replacingOccurrences(of: "_", with: "/")
+        let padding = urlSafe.count % 4
+        let padded = padding == 0 ? urlSafe : urlSafe + String(repeating: "=", count: 4 - padding)
+        if let decoded = Data(base64Encoded: padded, options: [.ignoreUnknownCharacters]), !decoded.isEmpty {
+            NSLog("[BetterPlayer-FairPlay] Inline certificate decoded via URL-safe base64 (%d bytes)", decoded.count)
+            return decoded
+        }
+
+        if let decoded = VuDrmResponseParser.extractCertificateData(from: sanitized.data(using: .utf8)), !decoded.isEmpty {
+            NSLog("[BetterPlayer-FairPlay] Inline certificate decoded via extractCertificateData (%d bytes)", decoded.count)
+            return decoded
+        }
+
+        NSLog("[BetterPlayer-FairPlay] Inline certificate decode failed for sanitizedLength=%d", sanitized.count)
+        return nil
+    }
+
+    private func loadCertificate(completion: @escaping (Data?) -> Void) {
+        let rawCertificateValue = (certificateURL ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !rawCertificateValue.isEmpty else {
+            NSLog("[BetterPlayer-FairPlay] Certificate load failed: certificateUrl is empty")
+            completion(nil)
+            return
+        }
+
+        if !isRemoteCertificateUrl(rawCertificateValue) {
+            NSLog("[BetterPlayer-FairPlay] certificateUrl type=inline-base64 (SonyLiv/ExpressPlay path)")
+            completion(decodeInlineCertificate(rawCertificateValue))
+            return
+        }
+
+        let certificateValue = sanitizeInlineCertificate(rawCertificateValue)
+        NSLog("[BetterPlayer-FairPlay] certificateUrl type=remote-url value=%@", certificateValue)
+        guard let url = URL(string: certificateValue) else {
+            completion(nil)
+            return
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        if let token = normalizedFairPlayToken {
+            request.setValue(token, forHTTPHeaderField: "x-vudrm-token")
+            request.setValue(token, forHTTPHeaderField: "nv-authorizations")
+        }
+
+        URLSession.shared.dataTask(with: request) { data, _, error in
+            if let error = error {
+                NSLog("[BetterPlayer-FairPlay] Certificate fetch failed: %@", error.localizedDescription)
+                completion(nil)
+                return
+            }
+            let certificateData = VuDrmResponseParser.extractCertificateData(from: data)
+            if let certificateData = certificateData {
+                NSLog("[BetterPlayer-FairPlay] Remote certificate fetched successfully (%d bytes)", certificateData.count)
+            } else {
+                NSLog("[BetterPlayer-FairPlay] Remote certificate response could not be parsed")
+            }
+            completion(certificateData)
+        }.resume()
+    }
+
+    private func processKeyRequest(_ loadingRequest: AVAssetResourceLoadingRequest, certificateData: Data) {
+        guard let licenseUrl = loadingRequest.request.url else {
+            loadingRequest.finishLoading()
+            NSLog("[BetterPlayer-FairPlay] Failed to extract skd license url from loading request")
+            return
+        }
+        NSLog("[BetterPlayer-FairPlay] skd resource url: %@", licenseUrl.absoluteString)
+
+        let contentId = VuDrmResponseParser.extractContentId(from: licenseUrl) ?? licenseUrl.absoluteString
+        guard
+            let contentIdData = contentId.data(using: .utf8),
+            let spcData = try? loadingRequest.streamingContentKeyRequestData(
+                forApp: certificateData,
+                contentIdentifier: contentIdData,
+                options: nil
+            ),
+            let dataRequest = loadingRequest.dataRequest else {
+            loadingRequest.finishLoading()
+            NSLog("[BetterPlayer-FairPlay] Failed to create SPC (contentId=%@)", contentId)
+            return
+        }
+        NSLog("[BetterPlayer-FairPlay] SPC created (contentId=%@, spcBytes=%d)", contentId, spcData.count)
+
+        let fallbackLicenseURL = licenseUrl.absoluteString.replacingOccurrences(of: "skd", with: "https")
+        let targetLicenseURLString = licenseURL?.absoluteString ?? fallbackLicenseURL
+        guard let targetLicenseURL = URL(string: targetLicenseURLString) else {
+            NSLog("[BetterPlayer-FairPlay] Failed to parse license server url: %@", targetLicenseURLString)
+            loadingRequest.finishLoading()
+            return
+        }
+        NSLog("[BetterPlayer-FairPlay] Posting SPC to license server: %@", targetLicenseURL.absoluteString)
+
+        var urlRequest = URLRequest(url: targetLicenseURL)
+        urlRequest.httpMethod = "POST"
+        urlRequest.httpBody = spcData
+        urlRequest.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
+        if let token = normalizedFairPlayToken {
+            urlRequest.setValue(token, forHTTPHeaderField: "nv-authorizations")
+            urlRequest.setValue(token, forHTTPHeaderField: "x-vudrm-token")
+            urlRequest.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            NSLog("[BetterPlayer-FairPlay] License request includes drm token")
+        }
+
+        URLSession.shared.dataTask(with: urlRequest) { data, _, error in
+            if let error = error {
+                NSLog("[BetterPlayer-FairPlay] CKC fetch failed: %@", error.localizedDescription)
+                loadingRequest.finishLoading()
+                return
+            }
+
+            if let data = data {
+                if let ckcData = VuDrmResponseParser.extractCkcData(from: data) {
+                    NSLog("[BetterPlayer-FairPlay] CKC fetched successfully (%d bytes)", ckcData.count)
+                    dataRequest.respond(with: ckcData)
+                } else {
+                    NSLog("[BetterPlayer-FairPlay] Failed to parse CKC response (%d bytes)", data.count)
+                }
+            } else {
+                NSLog("[BetterPlayer-FairPlay] CKC response was empty")
+            }
+            loadingRequest.finishLoading()
+        }.resume()
     }
 
     public func resourceLoader(
         _ resourceLoader: AVAssetResourceLoader,
         shouldWaitForLoadingOfRequestedResource loadingRequest: AVAssetResourceLoadingRequest
     ) -> Bool {
-        guard let certUrlString = certificateURL, let certUrl = URL(string: certUrlString) else {
-            loadingRequest.finishLoading()
-            return false
-        }
-
-        var certRequest = URLRequest(url: certUrl)
-        certRequest.httpMethod = "GET"
-        certRequest.addValue(fairPlayToken ?? "", forHTTPHeaderField: "x-vudrm-token")
-
-        URLSession.shared.dataTask(with: certRequest) { [weak self] certData, _, certError in
+        NSLog("[BetterPlayer-FairPlay] FairPlay key request started")
+        loadCertificate { [weak self] certificateData in
             guard let self = self else {
                 loadingRequest.finishLoading()
                 return
             }
-            guard certError == nil, let certificateData = certData else {
-                print("❌ Error on fetching certificate! -> \(certError?.localizedDescription ?? "unknown")")
+            guard let certificateData = certificateData else {
+                NSLog("[BetterPlayer-FairPlay] FairPlay key request aborted: certificate decode returned nil")
                 loadingRequest.finishLoading()
                 return
             }
-            guard let licenseUrl = loadingRequest.request.url else {
-                print("❌ Error on extracting license url!")
-                loadingRequest.finishLoading()
-                return
-            }
-            print("✅ License url validation passed: -> \(licenseUrl)")
-
-            let contentId = licenseUrl.lastPathComponent
-            guard
-                let contentIdData = contentId.data(using: .utf8),
-                let spcData = try? loadingRequest.streamingContentKeyRequestData(
-                    forApp: certificateData,
-                    contentIdentifier: contentIdData,
-                    options: nil
-                ),
-                let dataRequest = loadingRequest.dataRequest
-            else {
-                print("❌ Error on creating SPC Message!")
-                loadingRequest.finishLoading()
-                return
-            }
-
-            let targetLicenseUrl = self.licenseURL ?? URL(string: licenseUrl.absoluteString.replacingOccurrences(of: "skd", with: "https"))
-            guard let postUrl = targetLicenseUrl else {
-                loadingRequest.finishLoading()
-                return
-            }
-
-            let payload: [String: Any?] = [
-                "token": self.fairPlayToken,
-                "contentId": contentId,
-                "payload": spcData.base64EncodedString(),
-            ]
-            guard let body = try? JSONSerialization.data(withJSONObject: payload.compactMapValues { $0 }, options: []) else {
-                loadingRequest.finishLoading()
-                return
-            }
-
-            var ckcRequest = URLRequest(url: postUrl)
-            ckcRequest.httpMethod = "POST"
-            ckcRequest.httpBody = body
-            ckcRequest.addValue("application/json", forHTTPHeaderField: "Content-Type")
-
-            URLSession.shared.dataTask(with: ckcRequest) { ckcData, _, ckcError in
-                if let ckcError = ckcError {
-                    print("❌ Error on fetching CKC! -> \(ckcError.localizedDescription)")
-                    loadingRequest.finishLoading()
-                    return
-                }
-                if let ckcData = ckcData {
-                    print("✅ CKC fetched successfully!")
-                    dataRequest.respond(with: ckcData)
-                } else {
-                    print("❌ Error in CKC data!")
-                }
-                loadingRequest.finishLoading()
-            }.resume()
-        }.resume()
+            NSLog("[BetterPlayer-FairPlay] Certificate ready for SPC (%d bytes)", certificateData.count)
+            self.processKeyRequest(loadingRequest, certificateData: certificateData)
+        }
 
         return true
+    }
+}
+
+private enum VuDrmResponseParser {
+    static func extractCkcData(from responseData: Data) -> Data? {
+        if
+            let jsonObject = try? JSONSerialization.jsonObject(with: responseData, options: []),
+            let json = jsonObject as? [String: Any] {
+            let supportedKeys = ["CkcMessage", "ckcMessage", "CKCMessage", "ckc", "CKC"]
+            for key in supportedKeys {
+                if let ckcMessage = json[key] as? String {
+                    return Data(base64Encoded: ckcMessage, options: [.ignoreUnknownCharacters]) ?? responseData
+                }
+            }
+        }
+
+        if
+            let responseString = String(data: responseData, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+            let base64Data = Data(base64Encoded: responseString, options: [.ignoreUnknownCharacters]) {
+            return base64Data
+        }
+
+        return responseData
+    }
+
+    static func extractCertificateData(from responseData: Data?) -> Data? {
+        guard let responseData = responseData else {
+            NSLog("[BetterPlayer-FairPlay] extractCertificateData: input is nil")
+            return nil
+        }
+
+        if
+            let jsonObject = try? JSONSerialization.jsonObject(with: responseData, options: []),
+            let json = jsonObject as? [String: Any] {
+            let supportedKeys = ["certificate", "Certificate", "cert", "CertMessage", "CertificateMessage"]
+            for key in supportedKeys {
+                if
+                    let certValue = json[key] as? String,
+                    let certData = Data(base64Encoded: certValue, options: [.ignoreUnknownCharacters]) {
+                    NSLog("[BetterPlayer-FairPlay] extractCertificateData: decoded JSON key '%@' (%d bytes)", key, certData.count)
+                    return certData
+                }
+            }
+        }
+
+        if
+            let responseString = String(data: responseData, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+            let base64Data = Data(base64Encoded: responseString, options: [.ignoreUnknownCharacters]),
+            !base64Data.isEmpty {
+            NSLog("[BetterPlayer-FairPlay] extractCertificateData: decoded base64 string (%d bytes)", base64Data.count)
+            return base64Data
+        }
+
+        if !responseData.isEmpty {
+            NSLog("[BetterPlayer-FairPlay] extractCertificateData: using raw response data (%d bytes)", responseData.count)
+        }
+        return responseData.isEmpty ? nil : responseData
+    }
+
+    static func extractContentId(from skdURL: URL) -> String? {
+        let skdString = skdURL.absoluteString
+        guard skdString.hasPrefix("skd://") else {
+            return skdURL.lastPathComponent
+        }
+
+        let payloadPart = skdString.replacingOccurrences(of: "skd://", with: "")
+            .components(separatedBy: "?")
+            .first ?? ""
+        guard !payloadPart.isEmpty else {
+            return nil
+        }
+
+        if
+            let payloadData = Data(base64Encoded: payloadPart, options: [.ignoreUnknownCharacters]),
+            let decodedPayload = String(data: payloadData, encoding: .utf8),
+            !decodedPayload.isEmpty {
+            return decodedPayload
+        }
+
+        return payloadPart
     }
 }

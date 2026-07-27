@@ -141,7 +141,7 @@ class _BetterPlayerWithControlsState extends State<BetterPlayerWithControls> {
       Container();
 
   Widget _buildControls(BuildContext context, BetterPlayerController betterPlayerController) {
-    if (controlsConfiguration.showControls) {
+    if (controlsConfiguration.showControls && betterPlayerController.controlsEnabled) {
       BetterPlayerTheme? playerTheme = controlsConfiguration.playerTheme;
       if (playerTheme == null) {
         if (Platform.isAndroid) {
@@ -220,8 +220,9 @@ class _BetterPlayerVideoFitWidgetState extends State<_BetterPlayerVideoFitWidget
   void didUpdateWidget(_BetterPlayerVideoFitWidget oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.betterPlayerController.videoPlayerController != controller) {
-      if (_initializedListener != null) {
-        oldWidget.betterPlayerController.videoPlayerController!.removeListener(_initializedListener!);
+      final previousController = oldWidget.betterPlayerController.videoPlayerController;
+      if (_initializedListener != null && previousController != null) {
+        previousController.removeListener(_initializedListener!);
       }
       _initialized = false;
       _initialize();
@@ -229,18 +230,24 @@ class _BetterPlayerVideoFitWidgetState extends State<_BetterPlayerVideoFitWidget
   }
 
   void _initialize() {
-    if (controller?.value.initialized == false) {
+    final activeController = controller;
+    if (activeController != null && !activeController.value.initialized) {
       _initializedListener = () {
         if (!mounted) {
           return;
         }
 
-        if (_initialized != controller!.value.initialized) {
-          _initialized = controller!.value.initialized;
+        final currentController = controller;
+        if (currentController == null) {
+          return;
+        }
+
+        if (_initialized != currentController.value.initialized) {
+          _initialized = currentController.value.initialized;
           setState(() {});
         }
       };
-      controller!.addListener(_initializedListener!);
+      activeController.addListener(_initializedListener!);
     } else {
       _initialized = true;
     }
@@ -263,11 +270,12 @@ class _BetterPlayerVideoFitWidgetState extends State<_BetterPlayerVideoFitWidget
 
   @override
   Widget build(BuildContext context) {
-    if (_initialized && _started) {
+    final activeController = controller;
+    if (_initialized && _started && activeController != null) {
       // iOS platform views (UiKitView) don't play well with Clip/Transform/FittedBox.
       // Render the platform view directly to avoid black screen.
       if (Platform.isIOS) {
-        return SizedBox.expand(child: VideoPlayer(controller));
+        return SizedBox.expand(child: VideoPlayer(activeController));
       }
       return Center(
         child: ClipRect(
@@ -275,9 +283,9 @@ class _BetterPlayerVideoFitWidgetState extends State<_BetterPlayerVideoFitWidget
             child: FittedBox(
               fit: widget.boxFit,
               child: SizedBox(
-                width: max(1, controller!.value.size?.width ?? 1.0),
-                height: max(1, controller!.value.size?.height ?? 1.0),
-                child: VideoPlayer(controller),
+                width: max(1, activeController.value.size?.width ?? 1.0),
+                height: max(1, activeController.value.size?.height ?? 1.0),
+                child: VideoPlayer(activeController),
               ),
             ),
           ),
@@ -290,8 +298,9 @@ class _BetterPlayerVideoFitWidgetState extends State<_BetterPlayerVideoFitWidget
 
   @override
   void dispose() {
-    if (_initializedListener != null) {
-      widget.betterPlayerController.videoPlayerController!.removeListener(_initializedListener!);
+    final activeController = widget.betterPlayerController.videoPlayerController;
+    if (_initializedListener != null && activeController != null) {
+      activeController.removeListener(_initializedListener!);
     }
     _controllerEventSubscription?.cancel();
     super.dispose();

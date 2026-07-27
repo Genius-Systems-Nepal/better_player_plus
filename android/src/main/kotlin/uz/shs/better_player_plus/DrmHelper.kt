@@ -2,8 +2,8 @@ package uz.shs.better_player_plus
 
 import android.content.Context
 import android.net.Uri
-import androidx.media3.common.C
 import androidx.media3.common.MediaItem
+import androidx.media3.datasource.DataSpec
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.dash.DashChunkSource
 import androidx.media3.exoplayer.dash.DashMediaSource
@@ -14,48 +14,50 @@ import androidx.media3.exoplayer.drm.ExoMediaDrm
 import androidx.media3.exoplayer.drm.MediaDrmCallback
 import androidx.media3.exoplayer.drm.MediaDrmCallbackException
 import androidx.media3.exoplayer.source.MediaSource
-import org.json.JSONArray
-import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
-import java.nio.charset.StandardCharsets
+import java.util.HashMap
 import java.util.UUID
 
+// Legacy betterplayer VuDRM/Widevine license flow for DASH streams.
 internal class DrmHelper {
     fun buildDrmMediaSource(
         uri: Uri,
         context: Context,
-        drmToken: String,
+        drmToken: String?,
+        drmHeaders: Map<String, String>?,
         licenseUrl: String
     ): MediaSource {
         val drmSessionManager = DefaultDrmSessionManager.Builder().build(
             object : MediaDrmCallback {
+                @Throws(MediaDrmCallbackException::class)
                 override fun executeProvisionRequest(
                     uuid: UUID,
                     request: ExoMediaDrm.ProvisionRequest
                 ): ByteArray {
-                    return try {
-                        val url = request.defaultUrl + "&signedRequest=" + String(request.data)
-                        executePost(url)
-                    } catch (_: IOException) {
-                        ByteArray(0)
+                    val url = request.defaultUrl + "&signedRequest=" + String(request.data)
+                    try {
+                        return executePost(url)
+                    } catch (e: IOException) {
+                        throw drmCallbackException(url, e)
                     }
                 }
 
+                @Throws(MediaDrmCallbackException::class)
                 override fun executeKeyRequest(
                     uuid: UUID,
                     request: ExoMediaDrm.KeyRequest
                 ): ByteArray {
-                    val requestProperties = mapOf(
-                        "kid" to "",
-                        "token" to drmToken
-                    )
-                    return try {
-                        executePost(request.data, requestProperties, licenseUrl)
-                    } catch (_: IOException) {
-                        ByteArray(0)
+                    try {
+                        return executePost(
+                            request.data,
+                            buildRequestHeaders(drmToken, drmHeaders),
+                            licenseUrl
+                        )
+                    } catch (e: IOException) {
+                        throw drmCallbackException(licenseUrl, e)
                     }
                 }
             }
@@ -75,7 +77,7 @@ internal class DrmHelper {
     @Throws(IOException::class)
     private fun executePost(
         data: ByteArray,
-        requestProperties: Map<String, String>,
+        requestHeaders: Map<String, String>,
         licenseUrl: String
     ): ByteArray {
         var connection: HttpURLConnection? = null
@@ -84,22 +86,16 @@ internal class DrmHelper {
             connection.requestMethod = "POST"
             connection.doOutput = true
             connection.doInput = true
-            connection.setRequestProperty("Content-Type", "application/json")
+            connection.setRequestProperty("Content-Type", "application/octet-stream")
             connection.connectTimeout = 30000
             connection.readTimeout = 30000
 
-            val drmInfo = JSONArray()
-            for (value in data) {
-                drmInfo.put(value.toInt() and 0xFF)
+            requestHeaders.forEach { (key, value) ->
+                connection.setRequestProperty(key, value)
             }
-            val payload = JSONObject().apply {
-                put("token", requestProperties["token"])
-                put("drm_info", drmInfo)
-                put("kid", requestProperties["kid"])
-            }.toString().toByteArray(StandardCharsets.UTF_8)
 
             connection.outputStream.use { out ->
-                out.write(payload)
+                out.write(data)
             }
 
             if (connection.responseCode >= 400) {
@@ -119,6 +115,30 @@ internal class DrmHelper {
         } finally {
             connection?.disconnect()
         }
+    }
+
+    private fun buildRequestHeaders(
+        drmToken: String?,
+        drmHeaders: Map<String, String>?
+    ): Map<String, String> {
+        val requestHeaders = HashMap<String, String>()
+        drmHeaders?.let { requestHeaders.putAll(it) }
+        val normalizedToken = drmToken?.trim()?.takeIf {
+            it.isNotEmpty() && !it.equals("null", ignoreCase = true)
+        }
+        normalizedToken?.let { requestHeaders["nv-authorizations"] = it }
+        return requestHeaders
+    }
+
+    private fun drmCallbackException(url: String, cause: Throwable): MediaDrmCallbackException {
+        val dataSpec = DataSpec.Builder().setUri(url).build()
+        return MediaDrmCallbackException(
+            dataSpec,
+            dataSpec.uri,
+            emptyMap(),
+            0,
+            cause
+        )
     }
 
     @Throws(IOException::class)

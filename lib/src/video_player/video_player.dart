@@ -32,6 +32,7 @@ class VideoPlayerValue {
     this.volume = 1.0,
     this.speed = 1.0,
     this.errorDescription,
+    this.errorCode = '0',
     this.isPip = false,
     this.nerdStatValue = '',
     this.bitrateValue = 0,
@@ -42,7 +43,8 @@ class VideoPlayerValue {
 
   /// Returns an instance with a `null` [Duration] and the given
   /// [errorDescription].
-  VideoPlayerValue.erroneous(String errorDescription) : this(duration: null, errorDescription: errorDescription);
+  VideoPlayerValue.erroneous(String errorDescription, {String errorCode = '0'})
+      : this(duration: null, errorDescription: errorDescription, errorCode: errorCode);
 
   /// The total duration of the video.
   ///
@@ -79,6 +81,9 @@ class VideoPlayerValue {
   ///
   /// If [hasError] is false this is [null].
   final String? errorDescription;
+
+  /// Native playback error code (e.g. Media3 [PlaybackException.errorCode]) for TRP.
+  final String errorCode;
 
   /// The [size] of the currently loaded video.
   ///
@@ -127,6 +132,7 @@ class VideoPlayerValue {
     bool? isBuffering,
     double? volume,
     String? errorDescription,
+    String? errorCode,
     double? speed,
     bool? isPip,
     String? nerdStatValue,
@@ -143,6 +149,7 @@ class VideoPlayerValue {
     volume: volume ?? this.volume,
     speed: speed ?? this.speed,
     errorDescription: errorDescription ?? this.errorDescription,
+    errorCode: errorCode ?? this.errorCode,
     isPip: isPip ?? this.isPip,
     nerdStatValue: nerdStatValue ?? this.nerdStatValue,
     bitrateValue: bitrateValue ?? this.bitrateValue,
@@ -160,7 +167,8 @@ class VideoPlayerValue {
       'isLooping: $isLooping, '
       'isBuffering: $isBuffering, '
       'volume: $volume, '
-      'errorDescription: $errorDescription)';
+      'errorDescription: $errorDescription, '
+      'errorCode: $errorCode)';
 }
 
 /// Controls a platform video player, and provides updates when the state is
@@ -262,9 +270,12 @@ class VideoPlayerController extends ValueNotifier<VideoPlayerValue> {
     void errorListener(Object object) {
       if (object is PlatformException) {
         final PlatformException e = object;
-        value = value.copyWith(errorDescription: e.message);
+        value = value.copyWith(
+          errorDescription: '${e.message} ${e.details}',
+          errorCode: '${e.details ?? '0'}',
+        );
       } else {
-        value.copyWith(errorDescription: object.toString());
+        value = value.copyWith(errorDescription: object.toString());
       }
       _timer?.cancel();
       if (!_initializingCompleter.isCompleted) {
@@ -618,6 +629,20 @@ class VideoPlayerController extends ValueNotifier<VideoPlayerValue> {
       return false;
     }
     return _videoPlayerPlatform.isPictureInPictureEnabled(_textureId);
+  }
+
+  Future<bool?> checkPipPermission() async {
+    if (_textureId == null) {
+      return false;
+    }
+    return _videoPlayerPlatform.checkPipPermission(_textureId);
+  }
+
+  Future<void> openPipPermissionSettings() async {
+    if (_textureId == null) {
+      return;
+    }
+    await _videoPlayerPlatform.openPipPermissionSettings(_textureId);
   }
 
   void refresh() {

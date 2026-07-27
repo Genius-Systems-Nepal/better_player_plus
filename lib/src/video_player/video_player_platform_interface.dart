@@ -152,6 +152,16 @@ abstract class VideoPlayerPlatform {
     throw UnimplementedError('isPictureInPictureEnabled() has not been implemented.');
   }
 
+  /// Whether the app currently has Android PiP permission (AppOps).
+  Future<bool?> checkPipPermission(int? textureId) {
+    throw UnimplementedError('checkPipPermission() has not been implemented.');
+  }
+
+  /// Opens system app settings so the user can grant PiP permission.
+  Future<void> openPipPermissionSettings(int? textureId) {
+    throw UnimplementedError('openPipPermissionSettings() has not been implemented.');
+  }
+
   Future<void> setAudioTrack(int? textureId, String? name, int? index) {
     throw UnimplementedError('setAudio() has not been implemented.');
   }

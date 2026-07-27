@@ -3,13 +3,26 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+import java.util.Properties
+import java.nio.charset.Charset
+
 group = "uz.shs.better_player_plus"
 version = "1.0-SNAPSHOT"
 
 val lifecycleVersion = "2.9.4"
 val annotationVersion = "1.9.1"
-val media3Version = "1.8.0"
+// Quanteec Media3 adapter (quanteecMedia3Exoplayer 1.8.33) supports Media3 1.0.x–1.6.x.
+val media3Version = "1.6.1"
 val workVersion = "2.10.5"
+val quanteecVersion = "1.8.33"
+
+val localProperties = Properties()
+val localPropertiesFile = rootProject.file("local.properties")
+if (localPropertiesFile.exists()) {
+    localPropertiesFile.reader(Charset.forName("UTF-8")).use { localProperties.load(it) }
+}
+val quanteecUsername = localProperties.getProperty("quanteecUsername") ?: ""
+val quanteecPassword = localProperties.getProperty("quanteecPassword") ?: ""
 
 buildscript {
     repositories {
@@ -26,6 +39,16 @@ allprojects {
     repositories {
         google()
         mavenCentral()
+        maven {
+            url = uri("https://maven.quanteec.com/repository/internal/")
+            credentials {
+                username = quanteecUsername
+                password = quanteecPassword
+            }
+            authentication {
+                create<org.gradle.authentication.http.BasicAuthentication>("basic")
+            }
+        }
     }
 }
 
@@ -62,6 +85,12 @@ dependencies {
     implementation("androidx.media3:media3-exoplayer-dash:$media3Version")
     implementation("androidx.media3:media3-datasource-cronet:$media3Version")
     implementation("androidx.media3:media3-exoplayer-smoothstreaming:$media3Version")
+    // IMA / VAST mid-roll (parity with GSN better_player ExoPlayer extension-ima)
+    implementation("androidx.media3:media3-exoplayer-ima:$media3Version")
+
+    // Quanteec P2P (Media3 adapter — parity with GSN better_player quanteecExoPlugin2_17)
+    implementation("com.quanteec:quanteecMedia3Exoplayer:$quanteecVersion")
+    implementation("com.quanteec:quanteecPlugin:$quanteecVersion")
 
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:$lifecycleVersion")
     implementation("androidx.lifecycle:lifecycle-common:$lifecycleVersion")

@@ -48,6 +48,8 @@ public class BetterPlayer: NSObject, FlutterPlatformView, FlutterStreamHandler, 
 
     private var pipController: AVPictureInPictureController?
     private var restoreUIOnPipStop: ((Bool) -> Void)?
+    /// Ensures Flutter receives a single pipStop for restore or dismiss.
+    private var pipStopNotified: Bool = false
     private let nerdStatHelper = NerdStatHelper()
     private var nerdStatTimer: Timer?
     private var quanteecPlugin: AnyObject?
@@ -700,75 +702,109 @@ public class BetterPlayer: NSObject, FlutterPlatformView, FlutterStreamHandler, 
 
     private func setupPipController() {
         if #available(iOS 9.0, *) {
-            try? AVAudioSession.sharedInstance().setActive(true)
+            do {
+                try AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
+                try AVAudioSession.sharedInstance().setActive(true)
+            } catch {
+                // Keep going — PiP may still start with an already-active session.
+            }
             UIApplication.shared.beginReceivingRemoteControlEvents()
             if pipController == nil, let layer = playerLayerRef, AVPictureInPictureController.isPictureInPictureSupported() {
                 pipController = AVPictureInPictureController(playerLayer: layer)
                 pipController?.delegate = self
+                // Do not enable automatic inline PiP — it fights manual start and causes flicker.
             }
         }
     }
 
     public func enablePictureInPicture(_ frame: CGRect) {
-        disablePictureInPicture()
+        if #available(iOS 9.0, *), let pip = pipController, pip.isPictureInPictureActive {
+            return
+        }
+        // Tear down any previous PiP layer without flipping the start flag.
+        if let layer = playerLayerRef {
+            layer.removeFromSuperlayer()
+            playerLayerRef = nil
+        }
+        pipController = nil
+        pictureInPicture = false
+        pipStopNotified = false
         usePlayerLayer(frame)
+    }
+
+    private func notifyPipStopIfNeeded() {
+        guard !pipStopNotified else { return }
+        pipStopNotified = true
+        eventSink?(["event": "pipStop"])
     }
 
     private func usePlayerLayer(_ frame: CGRect) {
         let layer = AVPlayerLayer(player: player)
+        let attach: (UIView) -> Void = { rootView in
+            // Tiny off-screen source layer — full-screen root layers interfered with
+            // Flutter hit-testing / compositing after PiP on iOS.
+            let safeFrame = CGRect(x: -2, y: -2, width: 2, height: 2)
+            layer.frame = safeFrame
+            layer.videoGravity = .resizeAspect
+            layer.needsDisplayOnBoundsChange = true
+            layer.opacity = 1
+            rootView.layer.insertSublayer(layer, at: 0)
+            self.playerLayerRef = layer
+            self.setupPipController()
+            self.player.play()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+                self?.setPictureInPicture(true)
+            }
+        }
         if #available(iOS 13.0, *) {
             if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
                let window = windowScene.windows.first,
                let rootVC = window.rootViewController {
-                layer.frame = frame
-                layer.needsDisplayOnBoundsChange = true
-                rootVC.view.layer.addSublayer(layer)
-                rootVC.view.layer.needsDisplayOnBoundsChange = true
-                playerLayerRef = layer
-                pipController = nil
-                setupPipController()
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                    self.setPictureInPicture(true)
-                }
+                attach(rootVC.view)
             }
-        } else {
-            if let window = UIApplication.shared.keyWindow ?? UIApplication.shared.windows.first,
-               let rootVC = window.rootViewController {
-                layer.frame = frame
-                layer.needsDisplayOnBoundsChange = true
-                rootVC.view.layer.addSublayer(layer)
-                rootVC.view.layer.needsDisplayOnBoundsChange = true
-                playerLayerRef = layer
-                pipController = nil
-                setupPipController()
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                    self.setPictureInPicture(true)
-                }
-            }
+        } else if let window = UIApplication.shared.keyWindow ?? UIApplication.shared.windows.first,
+                  let rootVC = window.rootViewController {
+            attach(rootVC.view)
         }
     }
 
     public func disablePictureInPicture() {
-        setPictureInPicture(true)
+        if #available(iOS 9.0, *), let pip = pipController, pip.isPictureInPictureActive {
+            setPictureInPicture(false)
+        } else {
+            pictureInPicture = false
+        }
         if let layer = playerLayerRef {
             layer.removeFromSuperlayer()
             playerLayerRef = nil
-            eventSink?(["event": "pipStop"])
+            notifyPipStopIfNeeded()
         }
+        pipController = nil
     }
 
     // MARK: - AVPictureInPictureControllerDelegate
     public func pictureInPictureControllerDidStopPictureInPicture(_ pictureInPictureController: AVPictureInPictureController) {
-        disablePictureInPicture()
+        if let layer = playerLayerRef {
+            layer.removeFromSuperlayer()
+            playerLayerRef = nil
+        }
+        notifyPipStopIfNeeded()
+        pipController = nil
+        pictureInPicture = false
     }
 
     public func pictureInPictureControllerDidStartPictureInPicture(_ pictureInPictureController: AVPictureInPictureController) {
+        pipStopNotified = false
         eventSink?(["event": "pipStart"])
     }
 
     public func pictureInPictureController(_ pictureInPictureController: AVPictureInPictureController, restoreUserInterfaceForPictureInPictureStopWithCompletionHandler completionHandler: @escaping (Bool) -> Void) {
         restoreUIOnPipStop = completionHandler
-        setRestoreUserInterfaceForPIPStopCompletionHandler(true)
+        notifyPipStopIfNeeded()
+        // Give Flutter one frame to bring the landscape shell back onstage.
+        DispatchQueue.main.async { [weak self] in
+            self?.setRestoreUserInterfaceForPIPStopCompletionHandler(true)
+        }
     }
 
     // MARK: - Audio & Tracks

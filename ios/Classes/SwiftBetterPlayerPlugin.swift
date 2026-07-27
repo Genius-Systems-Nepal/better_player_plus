@@ -260,7 +260,7 @@ extension SwiftBetterPlayerPlugin {
                     overriddenDuration: overriddenDuration,
                     drmToken: drmToken
                 )
-            } else if let uriArg = uriArg, let url = URL(string: uriArg) {
+            } else if let uriArg = uriArg, let url = Self.resolveDataSourceURL(from: uriArg) {
                 player.setDataSourceURL(
                     url,
                     key: key,
@@ -386,5 +386,20 @@ extension SwiftBetterPlayerPlugin {
     public func detachFromEngine(for registrar: FlutterPluginRegistrar) {
         for (_, player) in players { player.disposeSansEventChannel() }
         players.removeAll()
+    }
+
+    /// Resolves network, file-scheme, and absolute local paths (parity with GSN better_player ObjC plugin).
+    private static func resolveDataSourceURL(from uriArg: String) -> URL? {
+        if uriArg.hasPrefix("file:") {
+            if let dataUrl = URL(string: uriArg), !dataUrl.path.isEmpty {
+                return dataUrl
+            }
+            let path = uriArg.hasPrefix("file://") ? String(uriArg.dropFirst("file://".count)) : uriArg
+            return URL(fileURLWithPath: path)
+        }
+        if uriArg.hasPrefix("/") {
+            return URL(fileURLWithPath: uriArg)
+        }
+        return URL(string: uriArg)
     }
 }

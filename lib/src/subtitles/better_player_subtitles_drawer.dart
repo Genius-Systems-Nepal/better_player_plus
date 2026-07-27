@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:better_player_plus/better_player_plus.dart';
 import 'package:better_player_plus/src/subtitles/better_player_subtitle.dart';
+import 'package:better_player_plus/src/video_player/video_player.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_widget_from_html_core/flutter_widget_from_html_core.dart';
 
@@ -34,6 +35,8 @@ class _BetterPlayerSubtitlesDrawerState extends State<BetterPlayerSubtitlesDrawe
 
   ///Stream used to detect if play controls are visible or not
   late StreamSubscription<bool> _visibilityStreamSubscription;
+  VideoPlayerController? _attachedController;
+  VoidCallback? _controllerListener;
 
   @override
   void initState() {
@@ -49,7 +52,7 @@ class _BetterPlayerSubtitlesDrawerState extends State<BetterPlayerSubtitlesDrawe
       _configuration = setupDefaultConfiguration();
     }
 
-    widget.betterPlayerController.videoPlayerController!.addListener(_updateState);
+    _attachControllerListener();
 
     _outerTextStyle = TextStyle(
       fontSize: _configuration!.fontSize,
@@ -70,19 +73,49 @@ class _BetterPlayerSubtitlesDrawerState extends State<BetterPlayerSubtitlesDrawe
   }
 
   @override
+  void didUpdateWidget(BetterPlayerSubtitlesDrawer oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.betterPlayerController.videoPlayerController != widget.betterPlayerController.videoPlayerController) {
+      _detachControllerListener();
+      _attachControllerListener();
+    }
+  }
+
+  void _attachControllerListener() {
+    _controllerListener ??= _updateState;
+    final controller = widget.betterPlayerController.videoPlayerController;
+    _attachedController = controller;
+    controller?.addListener(_controllerListener!);
+    _latestValue = controller?.value;
+  }
+
+  void _detachControllerListener() {
+    final listener = _controllerListener;
+    if (listener != null) {
+      _attachedController?.removeListener(listener);
+    }
+    _attachedController = null;
+  }
+
+  @override
   void dispose() {
-    widget.betterPlayerController.videoPlayerController!.removeListener(_updateState);
+    _detachControllerListener();
     _visibilityStreamSubscription.cancel();
     super.dispose();
   }
 
   ///Called when player state has changed, i.e. new player position, etc.
   void _updateState() {
-    if (mounted) {
-      setState(() {
-        _latestValue = widget.betterPlayerController.videoPlayerController!.value;
-      });
+    if (!mounted) {
+      return;
     }
+    final controller = widget.betterPlayerController.videoPlayerController;
+    if (controller == null) {
+      return;
+    }
+    setState(() {
+      _latestValue = controller.value;
+    });
   }
 
   @override

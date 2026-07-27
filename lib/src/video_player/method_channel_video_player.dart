@@ -11,6 +11,20 @@ import 'package:flutter/widgets.dart';
 
 const MethodChannel _channel = MethodChannel('better_player_channel');
 
+Future<T?> _invokeOptionalMethod<T>(
+  String method,
+  Map<String, dynamic> arguments, {
+  T? fallback,
+}) async {
+  try {
+    return await _channel.invokeMethod<T>(method, arguments);
+  } on MissingPluginException {
+    return fallback;
+  } on PlatformException {
+    return fallback;
+  }
+}
+
 /// An implementation of [VideoPlayerPlatform] that uses method channels.
 class MethodChannelVideoPlayer extends VideoPlayerPlatform {
   @override
@@ -157,7 +171,11 @@ class MethodChannelVideoPlayer extends VideoPlayerPlatform {
     final int milliseconds =
         await _channel.invokeMethod<int>('absolutePosition', <String, dynamic>{'textureId': textureId}) ?? 0;
 
-    if (milliseconds <= 0) {
+    // ExoPlayer/Media3 often return Long.MAX_VALUE (C.TIME_UNSET) for live
+    // streams without a valid absolute timeline — reject out-of-range values.
+    const int minMs = -8640000000000000;
+    const int maxMs = 8640000000000000;
+    if (milliseconds <= 0 || milliseconds < minMs || milliseconds > maxMs) {
       return null;
     }
 
@@ -177,6 +195,16 @@ class MethodChannelVideoPlayer extends VideoPlayerPlatform {
   @override
   Future<bool?> isPictureInPictureEnabled(int? textureId) =>
       _channel.invokeMethod<bool>('isPictureInPictureSupported', <String, dynamic>{'textureId': textureId});
+
+  @override
+  Future<bool?> checkPipPermission(int? textureId) =>
+      _channel.invokeMethod<bool>('checkPictureInPicturePermission', <String, dynamic>{'textureId': textureId});
+
+  @override
+  Future<void> openPipPermissionSettings(int? textureId) => _channel.invokeMethod<void>(
+        'openPictureInPicturePermissionSettings',
+        <String, dynamic>{'textureId': textureId},
+      );
 
   @override
   Future<void> disablePictureInPicture(int? textureId) =>
@@ -201,22 +229,41 @@ class MethodChannelVideoPlayer extends VideoPlayerPlatform {
   );
 
   @override
-  Future<void> disposeAdView(int? textureId) =>
-      _channel.invokeMethod<void>('disposeAdView', <String, dynamic>{'textureId': textureId});
+  Future<void> disposeAdView(int? textureId) => _invokeOptionalMethod<void>(
+        'disposeAdView',
+        <String, dynamic>{'textureId': textureId},
+      );
 
   @override
-  Future<bool?> isAdPlaying(int? textureId) =>
-      _channel.invokeMethod<bool>('isAdPlaying', <String, dynamic>{'textureId': textureId});
+  Future<bool?> isAdPlaying(int? textureId) => _invokeOptionalMethod<bool>(
+        'isAdPlaying',
+        <String, dynamic>{'textureId': textureId},
+        fallback: false,
+      );
 
   @override
-  Future<Duration?> contentDuration(int? textureId) async => Duration(
-    milliseconds: await _channel.invokeMethod<int>('contentDuration', <String, dynamic>{'textureId': textureId}) ?? -1,
-  );
+  Future<Duration?> contentDuration(int? textureId) async {
+    final milliseconds = await _invokeOptionalMethod<int>(
+      'contentDuration',
+      <String, dynamic>{'textureId': textureId},
+    );
+    if (milliseconds == null || milliseconds < 0) {
+      return null;
+    }
+    return Duration(milliseconds: milliseconds);
+  }
 
   @override
-  Future<Duration?> contentPosition(int? textureId) async => Duration(
-    milliseconds: await _channel.invokeMethod<int>('contentPosition', <String, dynamic>{'textureId': textureId}) ?? -1,
-  );
+  Future<Duration?> contentPosition(int? textureId) async {
+    final milliseconds = await _invokeOptionalMethod<int>(
+      'contentPosition',
+      <String, dynamic>{'textureId': textureId},
+    );
+    if (milliseconds == null || milliseconds < 0) {
+      return null;
+    }
+    return Duration(milliseconds: milliseconds);
+  }
 
   @override
   Future<void> clearCache() => _channel.invokeMethod<void>('clearCache', <String, dynamic>{});
