@@ -29,4 +29,5 @@ enum BetterPlayerEventType {
   adStarted,
   adEnded,
   bitrateUpdate,
+  changedAudioTracks
 }

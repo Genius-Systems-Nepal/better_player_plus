@@ -876,6 +876,7 @@ public class BetterPlayer: NSObject, FlutterPlatformView, FlutterStreamHandler, 
         eventChannel?.setStreamHandler(nil)
         disablePictureInPicture()
         setPictureInPicture(false)
+        quanteecPlugin = nil
         disposed = true
     }
 }

@@ -15,9 +15,6 @@ enum QuanteecHelper {
         if let videoId = quanteecConfig["videoId"] as? String, !videoId.isEmpty {
             QuanteecConfig.shared.videoID = videoId
         }
-        
-//        QLoggerConfig.shared.showAnalytics = true
-//        QLoggerConfig.shared.activeLogLevel = .trace
 
         return QuanteecPlugin(player: player)
     }
