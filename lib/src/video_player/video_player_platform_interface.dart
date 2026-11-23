@@ -143,6 +143,16 @@ abstract class VideoPlayerPlatform {
     throw UnimplementedError('enablePictureInPicture() has not been implemented.');
   }
 
+  /// Arm system PiP for the next user-leave (mini → background).
+  Future<void> setPipEnterOnLeave(int? textureId, bool enabled) {
+    throw UnimplementedError('setPipEnterOnLeave() has not been implemented.');
+  }
+
+  /// Force pause + clear Now Playing (bypasses PiP-on-leave pause skip).
+  Future<void> pauseAndHideMediaSession(int? textureId) {
+    throw UnimplementedError('pauseAndHideMediaSession() has not been implemented.');
+  }
+
   ///Disables PiP mode.
   Future<void> disablePictureInPicture(int? textureId) {
     throw UnimplementedError('disablePictureInPicture() has not been implemented.');
@@ -150,6 +160,19 @@ abstract class VideoPlayerPlatform {
 
   Future<bool?> isPictureInPictureEnabled(int? textureId) {
     throw UnimplementedError('isPictureInPictureEnabled() has not been implemented.');
+  }
+
+  /// True when the Activity is currently in system PiP.
+  Future<bool?> isActivityInPictureInPictureMode(int? textureId) {
+    throw UnimplementedError('isActivityInPictureInPictureMode() has not been implemented.');
+  }
+
+  Future<bool?> checkPipPermission(int? textureId) {
+    throw UnimplementedError('checkPipPermission() has not been implemented.');
+  }
+
+  Future<void> openPipPermissionSettings(int? textureId) {
+    throw UnimplementedError('openPipPermissionSettings() has not been implemented.');
   }
 
   Future<void> setAudioTrack(int? textureId, String? name, int? index) {
@@ -245,6 +268,7 @@ class DataSource {
     this.activityName,
     this.clearKey,
     this.videoExtension,
+    this.cmcdConfig,
   }) : assert(uri == null || asset == null, 'You can provide uri or asset but not both.');
 
   /// The maximum cache size to keep on disk in bytes.
@@ -333,6 +357,9 @@ class DataSource {
   final String? clearKey;
 
   final String? videoExtension;
+
+  /// CTA-5004 CMCD (passed to native media HTTP stack).
+  final Map<String, dynamic>? cmcdConfig;
 
   /// Key to compare DataSource
   String get key {
@@ -505,6 +532,9 @@ enum VideoEventType {
 
   ///Bitrate update event.
   bitrateUpdate,
+
+  /// Device display turned off / locked while a player (often PiP) was active.
+  displayTurnedOff,
 
   /// An unknown event has been received.
   unknown,

@@ -238,6 +238,7 @@ extension SwiftBetterPlayerPlugin {
             let adsUrl = dataSource["ads_url"] as? String
             let extraParams = dataSource["extraParams"] as? [String: Any]
             let drmToken = extraParams?["drm_token"] as? String
+            let cmcdConfig = dataSource["cmcdConfig"] as? NSDictionary
             let overriddenDuration = (dataSource["overriddenDuration"] as? NSNumber)?.intValue ?? 0
 
             let useCache = (dataSource["useCache"] as? NSNumber)?.boolValue ?? false
@@ -273,7 +274,8 @@ extension SwiftBetterPlayerPlugin {
                     overriddenDuration: overriddenDuration,
                     videoExtension: videoExtension,
                     adsUrl: adsUrl,
-                    drmToken: drmToken
+                    drmToken: drmToken,
+                    cmcdConfig: cmcdConfig
                 )
             } else {
                 result(FlutterMethodNotImplemented)
@@ -320,11 +322,36 @@ extension SwiftBetterPlayerPlugin {
             let height = (argsMap["height"] as? NSNumber)?.doubleValue ?? 0
             player.enablePictureInPicture(CGRect(x: left, y: top, width: width, height: height))
             result(nil)
+        case "setPipEnterOnLeave":
+            let enabled = (argsMap["enabled"] as? NSNumber)?.boolValue ?? false
+            player.setPipEnterOnLeave(enabled)
+            result(nil)
+        case "pauseAndHideMediaSession":
+            player.pauseAndHideMediaSession()
+            result(nil)
         case "isPictureInPictureSupported":
             if #available(iOS 9.0, *), AVPictureInPictureController.isPictureInPictureSupported() {
                 result(NSNumber(value: true)); return
             }
             result(NSNumber(value: false))
+        case "isActivityInPictureInPictureMode":
+            // iOS has no Activity PiP flag; report AVPictureInPicture active state.
+            if #available(iOS 9.0, *) {
+                result(NSNumber(value: player.pictureInPicture))
+            } else {
+                result(NSNumber(value: false))
+            }
+        case "checkPictureInPicturePermission":
+            if #available(iOS 9.0, *) {
+                result(NSNumber(value: AVPictureInPictureController.isPictureInPictureSupported()))
+            } else {
+                result(NSNumber(value: false))
+            }
+        case "openPictureInPicturePermissionSettings":
+            if let url = URL(string: UIApplication.openSettingsURLString) {
+                UIApplication.shared.open(url, options: [:], completionHandler: nil)
+            }
+            result(nil)
         case "disablePictureInPicture":
             player.disablePictureInPicture(); player.setPictureInPicture(false); result(nil)
         case "setAudioTrack":

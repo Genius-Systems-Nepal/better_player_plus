@@ -94,6 +94,14 @@ class BetterPlayerController {
   ///Subtitles lines for current data source.
   List<BetterPlayerSubtitle> subtitlesLines = [];
 
+  /// When false, [BetterPlayerSubtitlesDrawer] draws nothing (selected source kept).
+  final ValueNotifier<bool> subtitlesOverlayVisible = ValueNotifier<bool>(true);
+
+  void setSubtitlesOverlayVisible(bool visible) {
+    if (subtitlesOverlayVisible.value == visible) return;
+    subtitlesOverlayVisible.value = visible;
+  }
+
   ///List of tracks available for current data source. Used only for HLS / DASH.
   List<BetterPlayerAsmsTrack> _betterPlayerAsmsTracks = [];
 
@@ -442,6 +450,7 @@ class BetterPlayerController {
           activityName: _betterPlayerDataSource?.notificationConfiguration?.activityName,
           clearKey: _betterPlayerDataSource?.drmConfiguration?.clearKey,
           videoExtension: _betterPlayerDataSource!.videoExtension,
+          cmcdConfig: _betterPlayerDataSource?.cmcdConfig,
         );
 
       case BetterPlayerDataSourceType.file:
@@ -606,6 +615,24 @@ class BetterPlayerController {
     }
 
     await videoPlayerController!.pause();
+    _postEvent(BetterPlayerEvent(BetterPlayerEventType.pause));
+  }
+
+  /// Force-pause and clear Now Playing (skips PiP-on-leave pause guard).
+  Future<void> pauseAndHideMediaSession() async {
+    if (videoPlayerController == null) {
+      return;
+    }
+    try {
+      await videoPlayerController!.setPipEnterOnLeave(false);
+    } catch (_) {}
+    try {
+      await videoPlayerController!.pauseAndHideMediaSession();
+    } catch (_) {
+      try {
+        await videoPlayerController!.pause();
+      } catch (_) {}
+    }
     _postEvent(BetterPlayerEvent(BetterPlayerEventType.pause));
   }
 
@@ -982,10 +1009,10 @@ class BetterPlayerController {
       }
     }
   }
+  }
 
-  ///Setup overridden aspect ratio.
-  void setOverriddenAspectRatio(double aspectRatio) {
-    _overriddenAspectRatio = aspectRatio;
+  ///Setup overridden aspect ratio. Pass null to clear the override.
+  void setOverriddenAspectRatio(double? aspectRatio) _overriddenAspectRatio = aspectRatio;
   }
 
   ///Get aspect ratio used in current video. If aspect ratio is null, then
@@ -1128,6 +1155,8 @@ class BetterPlayerController {
         _postEvent(BetterPlayerEvent(BetterPlayerEventType.adStarted));
       case VideoEventType.adEnded:
         _postEvent(BetterPlayerEvent(BetterPlayerEventType.adEnded));
+      case VideoEventType.displayTurnedOff:
+        _postEvent(BetterPlayerEvent(BetterPlayerEventType.displayTurnedOff));
       default:
         break;
     }
@@ -1163,6 +1192,7 @@ class BetterPlayerController {
 
     _betterPlayerAsmsAudioTrack = audioTrack;
     videoPlayerController!.setAudioTrack(audioTrack.label, audioTrack.id);
+    _postEvent(BetterPlayerEvent(BetterPlayerEventType.changedAudioTracks));
   }
 
   ///Enable or disable audio mixing with other sound within device.
@@ -1252,6 +1282,7 @@ class BetterPlayerController {
       _nextVideoTimeStreamController.close();
       _controlsVisibilityStreamController.close();
       _videoEventStreamSubscription?.cancel();
+      subtitlesOverlayVisible.dispose();
       _disposed = true;
       _controllerEventStreamController.close();
 

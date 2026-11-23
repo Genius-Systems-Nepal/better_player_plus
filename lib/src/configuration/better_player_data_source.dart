@@ -30,6 +30,7 @@ class BetterPlayerDataSource {
     this.videoExtension,
     this.drmConfiguration,
     this.quanteecConfig,
+    this.cmcdConfig,
     this.placeholder,
     this.bufferingConfiguration = const BetterPlayerBufferingConfiguration(),
   }) : assert(
@@ -58,6 +59,7 @@ class BetterPlayerDataSource {
     BetterPlayerVideoFormat? videoFormat,
     BetterPlayerDrmConfiguration? drmConfiguration,
     Map<String, dynamic>? quanteecConfig,
+    Map<String, dynamic>? cmcdConfig,
     Widget? placeholder,
     BetterPlayerBufferingConfiguration bufferingConfiguration = const BetterPlayerBufferingConfiguration(),
   }) => BetterPlayerDataSource(
@@ -77,6 +79,7 @@ class BetterPlayerDataSource {
     videoFormat: videoFormat,
     drmConfiguration: drmConfiguration,
     quanteecConfig: quanteecConfig,
+    cmcdConfig: cmcdConfig,
     placeholder: placeholder,
     bufferingConfiguration: bufferingConfiguration,
   );
@@ -203,6 +206,9 @@ class BetterPlayerDataSource {
   ///Optional QUANTEEC player configuration.
   final Map<String, dynamic>? quanteecConfig;
 
+  /// CTA-5004 CMCD config (mutually exclusive with [quanteecConfig] at play time).
+  final Map<String, dynamic>? cmcdConfig;
+
   ///Placeholder widget which will be shown until video load or play. This
   ///placeholder may be useful if you want to show placeholder before each video
   ///in playlist. Otherwise, you should use placeholder from
@@ -234,6 +240,7 @@ class BetterPlayerDataSource {
     String? videoExtension,
     BetterPlayerDrmConfiguration? drmConfiguration,
     Map<String, dynamic>? quanteecConfig,
+    Map<String, dynamic>? cmcdConfig,
     Widget? placeholder,
     BetterPlayerBufferingConfiguration? bufferingConfiguration = const BetterPlayerBufferingConfiguration(),
   }) => BetterPlayerDataSource(
@@ -255,6 +262,7 @@ class BetterPlayerDataSource {
     videoExtension: videoExtension ?? this.videoExtension,
     drmConfiguration: drmConfiguration ?? this.drmConfiguration,
     quanteecConfig: quanteecConfig ?? this.quanteecConfig,
+    cmcdConfig: cmcdConfig ?? this.cmcdConfig,
     placeholder: placeholder ?? this.placeholder,
     bufferingConfiguration: bufferingConfiguration ?? this.bufferingConfiguration,
   );

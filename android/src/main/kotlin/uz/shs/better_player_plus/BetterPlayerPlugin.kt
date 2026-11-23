@@ -4,12 +4,18 @@
 package uz.shs.better_player_plus
 
 import android.app.Activity
+import android.app.AppOpsManager
 import android.app.PictureInPictureParams
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.provider.Settings
 import android.util.Log
 import android.util.LongSparseArray
 import android.util.Rational
@@ -44,6 +50,15 @@ class BetterPlayerPlugin : FlutterPlugin, ActivityAware, MethodCallHandler {
     private var activity: Activity? = null
     private var pipHandler: Handler? = null
     private var pipRunnable: Runnable? = null
+
+    /// When true (mini player), enter system PiP in [onUserLeaveHint] / auto-enter
+    /// so Flutter lifecycle delays do not leave audio-only notification playback.
+    private var pipEnterOnLeave = false
+    private var pipLeavePlayer: BetterPlayer? = null
+
+    /// Screen lock / display off — pause PiP (and any active player) so audio
+    /// cannot keep playing with the display off.
+    private var screenOffReceiver: BroadcastReceiver? = null
     override fun onAttachedToEngine(binding: FlutterPluginBinding) {
         val loader = FlutterLoader()
         flutterState = FlutterState(
@@ -65,6 +80,8 @@ class BetterPlayerPlugin : FlutterPlugin, ActivityAware, MethodCallHandler {
             binding.textureRegistry
         )
         flutterState?.startListening(this)
+        instance = this
+        registerScreenOffReceiver(binding.applicationContext)
     }
 
 
@@ -73,21 +90,100 @@ class BetterPlayerPlugin : FlutterPlugin, ActivityAware, MethodCallHandler {
         if (flutterState == null) {
             Log.wtf(TAG, "Detached from the engine before registering to it.")
         }
+        unregisterScreenOffReceiver(binding.applicationContext)
         disposeAllPlayers()
         releaseCache()
         flutterState?.stopListening()
         flutterState = null
+        if (instance === this) {
+            instance = null
+        }
+    }
+
+    /** Forward Activity PiP mode changes so Dart `isPip` updates immediately. */
+    private fun handleActivityPictureInPictureModeChanged(inPip: Boolean) {
+        val player = pipLeavePlayer ?: findActivePlayer() ?: return
+        if (inPip) {
+            player.onPictureInPictureStatusChanged(true)
+            startPictureInPictureListenerTimer(player)
+        } else {
+            if (activity?.isInPictureInPictureMode == true) return
+            player.onPictureInPictureStatusChanged(false)
+            player.disposeMediaSession()
+            stopPipHandler()
+        }
     }
 
     override fun onAttachedToActivity(binding: ActivityPluginBinding) {
         activity = binding.activity
+        binding.addOnUserLeaveHintListener {
+            tryEnterPictureInPictureOnLeave()
+        }
     }
 
     override fun onDetachedFromActivityForConfigChanges() {}
 
-    override fun onReattachedToActivityForConfigChanges(binding: ActivityPluginBinding) {}
+    override fun onReattachedToActivityForConfigChanges(binding: ActivityPluginBinding) {
+        activity = binding.activity
+        binding.addOnUserLeaveHintListener {
+            tryEnterPictureInPictureOnLeave()
+        }
+    }
 
-    override fun onDetachedFromActivity() {}
+    override fun onDetachedFromActivity() {
+        activity = null
+        pipEnterOnLeave = false
+        pipLeavePlayer = null
+    }
+
+    private fun registerScreenOffReceiver(context: Context) {
+        if (screenOffReceiver != null) return
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(ctx: Context?, intent: Intent?) {
+                if (intent?.action != Intent.ACTION_SCREEN_OFF) return
+                handleDisplayTurnedOff()
+            }
+        }
+        screenOffReceiver = receiver
+        val filter = IntentFilter(Intent.ACTION_SCREEN_OFF)
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                context.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
+            } else {
+                @Suppress("UnspecifiedRegisterReceiverFlag")
+                context.registerReceiver(receiver, filter)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "registerScreenOffReceiver failed: ${e.message}")
+            screenOffReceiver = null
+        }
+    }
+
+    private fun unregisterScreenOffReceiver(context: Context) {
+        val receiver = screenOffReceiver ?: return
+        screenOffReceiver = null
+        try {
+            context.unregisterReceiver(receiver)
+        } catch (_: Exception) {
+        }
+    }
+
+    /// Lock / display off: pause active player (esp. Activity PiP) and notify
+    /// Dart so hold-alive cannot force play again.
+    private fun handleDisplayTurnedOff() {
+        val player = pipLeavePlayer ?: findActivePlayer() ?: return
+        try {
+            Handler(Looper.getMainLooper()).post {
+                try {
+                    player.onDisplayTurnedOff()
+                } catch (e: Exception) {
+                    Log.w(TAG, "onDisplayTurnedOff failed: ${e.message}")
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "handleDisplayTurnedOff failed: ${e.message}")
+        }
+    }
 
     @UnstableApi
     private fun disposeAllPlayers() {
@@ -144,6 +240,16 @@ class BetterPlayerPlugin : FlutterPlugin, ActivityAware, MethodCallHandler {
                 }
                 val textureId = ((call.argument<Any>(TEXTURE_ID_PARAMETER) as Int?) ?: 0).toLong()
                 val player = videoPlayers[textureId]
+                // Disarm auto-enter even when the Dart controller is already gone —
+                // otherwise Home still enters PiP from a stopped details page.
+                if (player == null &&
+                    call.method == SET_PIP_ENTER_ON_LEAVE_METHOD &&
+                    call.argument<Boolean>("enabled") != true
+                ) {
+                    setPipEnterOnLeave(false, null)
+                    result.success(null)
+                    return
+                }
                 if (player == null) {
                     result.error(
                         "Unknown textureId",
@@ -221,6 +327,21 @@ class BetterPlayerPlugin : FlutterPlugin, ActivityAware, MethodCallHandler {
                 result.success(null)
             }
 
+            SET_PIP_ENTER_ON_LEAVE_METHOD -> {
+                val enabled = call.argument<Boolean>("enabled") == true
+                setPipEnterOnLeave(enabled, player)
+                result.success(null)
+            }
+
+            PAUSE_AND_HIDE_MEDIA_SESSION_METHOD -> {
+                // Pause local playback and drop MediaSession so failed PiP /
+                // background-without-window cannot keep shade audio alive.
+                setPipEnterOnLeave(false, player)
+                player.pause()
+                player.disposeMediaSession()
+                result.success(null)
+            }
+
             DISABLE_PICTURE_IN_PICTURE_METHOD -> {
                 disablePictureInPicture(player)
                 result.success(null)
@@ -229,6 +350,24 @@ class BetterPlayerPlugin : FlutterPlugin, ActivityAware, MethodCallHandler {
             IS_PICTURE_IN_PICTURE_SUPPORTED_METHOD -> result.success(
                 isPictureInPictureSupported()
             )
+
+            IS_ACTIVITY_IN_PICTURE_IN_PICTURE_MODE_METHOD -> {
+                val inPip = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                    activity?.isInPictureInPictureMode == true
+                } else {
+                    false
+                }
+                result.success(inPip)
+            }
+
+            CHECK_PICTURE_IN_PICTURE_PERMISSION_METHOD -> result.success(
+                hasPipPermission(flutterState!!.applicationContext)
+            )
+
+            OPEN_PICTURE_IN_PICTURE_PERMISSION_SETTINGS_METHOD -> {
+                openPipPermissionSettings()
+                result.success(null)
+            }
 
             SET_AUDIO_TRACK_METHOD -> {
                 val name = call.argument<String?>(NAME_PARAMETER)
@@ -332,6 +471,9 @@ class BetterPlayerPlugin : FlutterPlugin, ActivityAware, MethodCallHandler {
                 getParameter(dataSource, DRM_HEADERS_PARAMETER, HashMap())
             val extraParams: Map<String, String> =
                 getParameter(dataSource, EXTRA_PARAMS_PARAMETER, HashMap())
+
+            @Suppress("UNCHECKED_CAST")
+            val cmcdConfig = dataSource["cmcdConfig"] as? Map<String, Any?>
             player.setDataSource(
                 flutterState!!.applicationContext,
                 key,
@@ -348,7 +490,8 @@ class BetterPlayerPlugin : FlutterPlugin, ActivityAware, MethodCallHandler {
                 drmHeaders,
                 extraParams,
                 cacheKey,
-                clearKey
+                clearKey,
+                cmcdConfig,
             )
         }
     }
@@ -473,6 +616,95 @@ class BetterPlayerPlugin : FlutterPlugin, ActivityAware, MethodCallHandler {
             .hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)
     }
 
+    private fun openPipPermissionSettings() {
+        val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+        val uri = Uri.fromParts(
+            "package",
+            flutterState?.applicationContext!!.packageName,
+            null
+        )
+        intent.data = uri
+        activity?.startActivity(intent)
+    }
+
+    private fun hasPipPermission(context: Context): Boolean {
+        val appOps = context.getSystemService(Context.APP_OPS_SERVICE) as? AppOpsManager?
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val mode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                appOps?.unsafeCheckOpNoThrow(
+                    AppOpsManager.OPSTR_PICTURE_IN_PICTURE,
+                    android.os.Process.myUid(),
+                    context.packageName
+                )
+            } else {
+                @Suppress("DEPRECATION")
+                appOps?.checkOpNoThrow(
+                    AppOpsManager.OPSTR_PICTURE_IN_PICTURE,
+                    android.os.Process.myUid(),
+                    context.packageName
+                )
+            }
+            mode == AppOpsManager.MODE_ALLOWED
+        } else {
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.N
+        }
+    }
+
+    private fun setPipEnterOnLeave(enabled: Boolean, player: BetterPlayer?) {
+        pipEnterOnLeave = enabled
+        pipLeavePlayer = if (enabled) player else null
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        val act = activity ?: return
+        try {
+            act.setPictureInPictureParams(buildPipParams(autoEnter = enabled))
+        } catch (_: Exception) {
+        }
+        if (enabled && player != null) {
+            try {
+                player.setupMediaSession(flutterState!!.applicationContext)
+            } catch (_: Exception) {
+            }
+        }
+    }
+
+    private fun buildPipParams(autoEnter: Boolean = pipEnterOnLeave): PictureInPictureParams {
+        val builder = PictureInPictureParams.Builder()
+            .setAspectRatio(Rational(16, 9))
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            builder.setAutoEnterEnabled(autoEnter)
+            builder.setSeamlessResizeEnabled(true)
+        }
+        return builder.build()
+    }
+
+    private fun tryEnterPictureInPictureOnLeave() {
+        if (!pipEnterOnLeave) return
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        val act = activity ?: return
+        if (act.isInPictureInPictureMode) return
+        val player = pipLeavePlayer
+            ?: findPlayingPlayer()
+            ?: findActivePlayer()
+            ?: return
+        enablePictureInPicture(player)
+    }
+
+    private fun findPlayingPlayer(): BetterPlayer? {
+        for (i in 0 until videoPlayers.size) {
+            val player = videoPlayers.valueAt(i) ?: continue
+            if (player.isPlayWhenReady()) return player
+        }
+        return null
+    }
+
+    private fun findActivePlayer(): BetterPlayer? {
+        for (i in 0 until videoPlayers.size) {
+            val player = videoPlayers.valueAt(i)
+            if (player != null) return player
+        }
+        return null
+    }
+
     private fun enablePictureInPicture(player: BetterPlayer) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             player.setupMediaSession(flutterState!!.applicationContext)
@@ -486,6 +718,19 @@ class BetterPlayerPlugin : FlutterPlugin, ActivityAware, MethodCallHandler {
 
     private fun disablePictureInPicture(player: BetterPlayer) {
         stopPipHandler()
+        pipEnterOnLeave = false
+        pipLeavePlayer = null
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            try {
+                activity?.setPictureInPictureParams(
+                    PictureInPictureParams.Builder()
+                        .setAspectRatio(Rational(16, 9))
+                        .setAutoEnterEnabled(false)
+                        .build()
+                )
+            } catch (_: Exception) {
+            }
+        }
         activity!!.moveTaskToBack(false)
         player.onPictureInPictureStatusChanged(false)
         player.disposeMediaSession()
@@ -549,6 +794,16 @@ class BetterPlayerPlugin : FlutterPlugin, ActivityAware, MethodCallHandler {
 
     companion object {
         private const val TAG = "BetterPlayerPlugin"
+
+        @JvmStatic
+        @Volatile
+        private var instance: BetterPlayerPlugin? = null
+
+        @JvmStatic
+        fun onActivityPictureInPictureModeChanged(inPip: Boolean) {
+            instance?.handleActivityPictureInPictureModeChanged(inPip)
+        }
+
         private const val CHANNEL = "better_player_channel"
         private const val EVENTS_CHANNEL = "better_player_channel/videoEvents"
         private const val DATA_SOURCE_PARAMETER = "dataSource"
@@ -607,8 +862,16 @@ class BetterPlayerPlugin : FlutterPlugin, ActivityAware, MethodCallHandler {
         private const val SET_TRACK_PARAMETERS_METHOD = "setTrackParameters"
         private const val SET_AUDIO_TRACK_METHOD = "setAudioTrack"
         private const val ENABLE_PICTURE_IN_PICTURE_METHOD = "enablePictureInPicture"
+        private const val SET_PIP_ENTER_ON_LEAVE_METHOD = "setPipEnterOnLeave"
+        private const val PAUSE_AND_HIDE_MEDIA_SESSION_METHOD = "pauseAndHideMediaSession"
         private const val DISABLE_PICTURE_IN_PICTURE_METHOD = "disablePictureInPicture"
         private const val IS_PICTURE_IN_PICTURE_SUPPORTED_METHOD = "isPictureInPictureSupported"
+        private const val IS_ACTIVITY_IN_PICTURE_IN_PICTURE_MODE_METHOD =
+            "isActivityInPictureInPictureMode"
+        private const val CHECK_PICTURE_IN_PICTURE_PERMISSION_METHOD =
+            "checkPictureInPicturePermission"
+        private const val OPEN_PICTURE_IN_PICTURE_PERMISSION_SETTINGS_METHOD =
+            "openPictureInPicturePermissionSettings"
         private const val SET_MIX_WITH_OTHERS_METHOD = "setMixWithOthers"
         private const val CLEAR_CACHE_METHOD = "clearCache"
         private const val DISPOSE_METHOD = "dispose"

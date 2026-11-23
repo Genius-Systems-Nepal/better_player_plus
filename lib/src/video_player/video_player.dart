@@ -5,6 +5,7 @@
 // Dart imports:
 import 'dart:async';
 import 'dart:io';
+
 import 'package:better_player_plus/src/configuration/better_player_buffering_configuration.dart';
 import 'package:better_player_plus/src/video_player/video_player_platform_interface.dart';
 import 'package:flutter/material.dart';
@@ -35,6 +36,10 @@ class VideoPlayerValue {
     this.isPip = false,
     this.nerdStatValue = '',
     this.bitrateValue = 0,
+    this.selectedVideoWidth = 0,
+    this.selectedVideoHeight = 0,
+    this.selectedTrackBitrate = 0,
+    this.errorCode = '0',
   });
 
   /// Returns an instance with a `null` [Duration].
@@ -42,7 +47,8 @@ class VideoPlayerValue {
 
   /// Returns an instance with a `null` [Duration] and the given
   /// [errorDescription].
-  VideoPlayerValue.erroneous(String errorDescription) : this(duration: null, errorDescription: errorDescription);
+  VideoPlayerValue.erroneous(String errorDescription, {String errorCode = '0'})
+      : this(duration: null, errorDescription: errorDescription, errorCode: errorCode);
 
   /// The total duration of the video.
   ///
@@ -94,6 +100,18 @@ class VideoPlayerValue {
   ///Current bitrate estimate from native layer.
   final int bitrateValue;
 
+  /// Native selected video track width (0 when unknown).
+  final int selectedVideoWidth;
+
+  /// Native selected video track height (0 when unknown).
+  final int selectedVideoHeight;
+
+  /// Native selected video track bitrate (0 when unknown).
+  final int selectedTrackBitrate;
+
+  /// Platform error code when [hasError] is true (defaults to `"0"`).
+  final String errorCode;
+
   /// Indicates whether or not the video has been loaded and is ready to play.
   bool get initialized => duration != null;
 
@@ -116,6 +134,8 @@ class VideoPlayerValue {
 
   /// Returns a new instance that has the same values as this current instance,
   /// except for any overrides passed in as arguments to [copyWidth].
+  static const Object _unset = Object();
+
   VideoPlayerValue copyWith({
     Duration? duration,
     Size? size,
@@ -126,11 +146,15 @@ class VideoPlayerValue {
     bool? isLooping,
     bool? isBuffering,
     double? volume,
-    String? errorDescription,
+    Object? errorDescription = _unset,
     double? speed,
     bool? isPip,
     String? nerdStatValue,
     int? bitrateValue,
+    int? selectedVideoWidth,
+    int? selectedVideoHeight,
+    int? selectedTrackBitrate,
+    Object? errorCode = _unset,
   }) => VideoPlayerValue(
     duration: duration ?? this.duration,
     size: size ?? this.size,
@@ -142,11 +166,19 @@ class VideoPlayerValue {
     isBuffering: isBuffering ?? this.isBuffering,
     volume: volume ?? this.volume,
     speed: speed ?? this.speed,
-    errorDescription: errorDescription ?? this.errorDescription,
+    errorDescription: identical(errorDescription, _unset)
+        ? this.errorDescription
+        : errorDescription as String?,
     isPip: isPip ?? this.isPip,
     nerdStatValue: nerdStatValue ?? this.nerdStatValue,
     bitrateValue: bitrateValue ?? this.bitrateValue,
+    selectedVideoWidth: selectedVideoWidth ?? this.selectedVideoWidth,
+    selectedVideoHeight: selectedVideoHeight ?? this.selectedVideoHeight,
+    selectedTrackBitrate: selectedTrackBitrate ?? this.selectedTrackBitrate,
+    errorCode: identical(errorCode, _unset) ? this.errorCode : (errorCode as String? ?? '0'),
   );
+
+  VideoPlayerValue clearError() => copyWith(errorDescription: null, errorCode: '0');
 
   @override
   String toString() =>
@@ -248,6 +280,8 @@ class VideoPlayerController extends ValueNotifier<VideoPlayerValue> {
           value = value.copyWith(isPip: true);
         case VideoEventType.pipStop:
           value = value.copyWith(isPip: false);
+        case VideoEventType.displayTurnedOff:
+          value = value.copyWith(isPlaying: false);
         case VideoEventType.nerdStat:
           value = value.copyWith(nerdStatValue: '${event.nerdStat ?? ''}');
         case VideoEventType.bitrateUpdate:
@@ -262,9 +296,12 @@ class VideoPlayerController extends ValueNotifier<VideoPlayerValue> {
     void errorListener(Object object) {
       if (object is PlatformException) {
         final PlatformException e = object;
-        value = value.copyWith(errorDescription: e.message);
+        value = value.copyWith(
+          errorDescription: e.message,
+          errorCode: '${e.details ?? e.code}',
+        );
       } else {
-        value.copyWith(errorDescription: object.toString());
+        value = value.copyWith(errorDescription: object.toString());
       }
       _timer?.cancel();
       if (!_initializingCompleter.isCompleted) {
@@ -335,6 +372,7 @@ class VideoPlayerController extends ValueNotifier<VideoPlayerValue> {
     String? activityName,
     String? clearKey,
     String? videoExtension,
+        Map<String, dynamic>? cmcdConfig,
   }) => _setDataSource(
     DataSource(
       sourceType: DataSourceType.network,
@@ -359,6 +397,7 @@ class VideoPlayerController extends ValueNotifier<VideoPlayerValue> {
       activityName: activityName,
       clearKey: clearKey,
       videoExtension: videoExtension,
+      cmcdConfig: cmcdConfig,
     ),
   );
 
@@ -602,6 +641,21 @@ class VideoPlayerController extends ValueNotifier<VideoPlayerValue> {
     await _videoPlayerPlatform.enablePictureInPicture(textureId, top, left, width, height);
   }
 
+  /// Arm native onUserLeaveHint / auto-enter PiP (mini → background).
+  Future<void> setPipEnterOnLeave(bool enabled) async {
+    await _videoPlayerPlatform.setPipEnterOnLeave(textureId, enabled);
+  }
+
+  /// Clear Activity auto-enter even when no [VideoPlayerController] remains.
+  static Future<void> clearPipEnterOnLeaveGlobal() async {
+    await _videoPlayerPlatform.setPipEnterOnLeave(-1, false);
+  }
+
+  /// Force-pause and clear Now Playing (Cast / no local BG audio).
+  Future<void> pauseAndHideMediaSession() async {
+    await _videoPlayerPlatform.pauseAndHideMediaSession(textureId);
+  }
+
   Future<void> disablePictureInPicture() async {
     await _videoPlayerPlatform.disablePictureInPicture(textureId);
   }
@@ -618,6 +672,24 @@ class VideoPlayerController extends ValueNotifier<VideoPlayerValue> {
       return false;
     }
     return _videoPlayerPlatform.isPictureInPictureEnabled(_textureId);
+  }
+
+  Future<bool?> isActivityInPictureInPictureMode() async {
+    if (_textureId == null) {
+      return false;
+    }
+    return _videoPlayerPlatform.isActivityInPictureInPictureMode(_textureId);
+  }
+
+  Future<bool?> checkPipPermission() async {
+    if (_textureId == null) {
+      return false;
+    }
+    return _videoPlayerPlatform.checkPipPermission(_textureId);
+  }
+
+  Future<void> openPipPermissionSettings() async {
+    await _videoPlayerPlatform.openPipPermissionSettings(_textureId);
   }
 
   void refresh() {

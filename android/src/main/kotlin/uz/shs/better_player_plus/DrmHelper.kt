@@ -2,147 +2,105 @@ package uz.shs.better_player_plus
 
 import android.content.Context
 import android.net.Uri
-import androidx.media3.common.C
+import android.os.Build
+import android.util.Log
+import androidx.annotation.OptIn
 import androidx.media3.common.MediaItem
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.common.util.Util
+import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.dash.DashChunkSource
 import androidx.media3.exoplayer.dash.DashMediaSource
 import androidx.media3.exoplayer.dash.DefaultDashChunkSource
 import androidx.media3.exoplayer.drm.DefaultDrmSessionManager
 import androidx.media3.exoplayer.drm.DrmSessionManagerProvider
-import androidx.media3.exoplayer.drm.ExoMediaDrm
-import androidx.media3.exoplayer.drm.MediaDrmCallback
-import androidx.media3.exoplayer.drm.MediaDrmCallbackException
+import androidx.media3.exoplayer.drm.DummyExoMediaDrm
+import androidx.media3.exoplayer.drm.HttpMediaDrmCallback
+import androidx.media3.exoplayer.drm.UnsupportedDrmException
 import androidx.media3.exoplayer.source.MediaSource
-import org.json.JSONArray
-import org.json.JSONObject
-import java.io.ByteArrayOutputStream
-import java.io.IOException
-import java.net.HttpURLConnection
-import java.net.URL
-import java.nio.charset.StandardCharsets
 import java.util.UUID
 
+@OptIn(UnstableApi::class)
 internal class DrmHelper {
+
+    @Suppress("UNUSED_PARAMETER")
     fun buildDrmMediaSource(
         uri: Uri,
         context: Context,
-        drmToken: String,
-        licenseUrl: String
+        drmToken: String?,
+        drmHeaders: Map<String, String>?,
+        licenseUrl: String,
+        mediaDataSourceFactory: DataSource.Factory? = null,
+        onKeyExpired: (() -> Unit)? = null
     ): MediaSource {
-        val drmSessionManager = DefaultDrmSessionManager.Builder().build(
-            object : MediaDrmCallback {
-                override fun executeProvisionRequest(
-                    uuid: UUID,
-                    request: ExoMediaDrm.ProvisionRequest
-                ): ByteArray {
-                    return try {
-                        val url = request.defaultUrl + "&signedRequest=" + String(request.data)
-                        executePost(url)
-                    } catch (_: IOException) {
-                        ByteArray(0)
-                    }
-                }
+        // Force every key/renewal request onto the app-supplied licenseUrl so
+        // CustomData (and other query auth) is never dropped for PSSH default URLs.
+        // License HTTP stays unwrapped (no CMCD on key fetches).
+        val httpMediaDrmCallback =
+            HttpMediaDrmCallback(
+                licenseUrl,
+                /* forceDefaultLicenseUrl= */ true,
+                DefaultHttpDataSource.Factory()
+            )
+        drmHeaders?.forEach { (drmKey, drmValue) ->
+            httpMediaDrmCallback.setKeyRequestProperty(drmKey, drmValue)
+        }
+        val normalizedToken = drmToken?.trim()?.takeIf {
+            it.isNotEmpty() && !it.equals("null", ignoreCase = true)
+        }
+        normalizedToken?.let {
+            httpMediaDrmCallback.setKeyRequestProperty("nv-authorizations", it)
+        }
 
-                override fun executeKeyRequest(
-                    uuid: UUID,
-                    request: ExoMediaDrm.KeyRequest
-                ): ByteArray {
-                    val requestProperties = mapOf(
-                        "kid" to "",
-                        "token" to drmToken
-                    )
-                    return try {
-                        executePost(request.data, requestProperties, licenseUrl)
-                    } catch (_: IOException) {
-                        ByteArray(0)
+        val drmSchemeUuid = Util.getDrmUuid("widevine")
+        val defaultDrmSessionManager = if (drmSchemeUuid != null && Build.VERSION.SDK_INT >= 18) {
+            DefaultDrmSessionManager.Builder()
+                .setUuidAndExoMediaDrmProvider(drmSchemeUuid) { uuid: UUID? ->
+                    try {
+                        // L3 + KEY_EXPIRED → silent session recreate (OEM cannot renew in-place).
+                        KeyExpiredRemappingExoMediaDrm.createWidevineL3(uuid!!, onKeyExpired)
+                    } catch (e: UnsupportedDrmException) {
+                        Log.e(TAG, "Widevine unsupported", e)
+                        DummyExoMediaDrm()
                     }
                 }
-            }
+                .setMultiSession(true)
+                .build(httpMediaDrmCallback)
+        } else {
+            DefaultDrmSessionManager.Builder().build(httpMediaDrmCallback)
+        }
+
+        defaultDrmSessionManager.setMode(
+            DefaultDrmSessionManager.MODE_PLAYBACK,
+            null
         )
 
-        drmSessionManager.setMode(DefaultDrmSessionManager.MODE_PLAYBACK, null)
-        val drmSessionManagerProvider = DrmSessionManagerProvider { drmSessionManager }
+        val drmSessionManagerProvider = DrmSessionManagerProvider {
+            defaultDrmSessionManager
+        }
 
+        return buildDashMediaSource(drmSessionManagerProvider, uri, mediaDataSourceFactory)
+    }
+
+    private fun buildDashMediaSource(
+        drmSessionManager: DrmSessionManagerProvider,
+        uri: Uri,
+        mediaDataSourceFactory: DataSource.Factory?,
+    ): DashMediaSource {
+        // Optional CMCD-wrapped factory for manifest/segments; never used for license.
+        val mediaFactory = mediaDataSourceFactory ?: DefaultHttpDataSource.Factory()
         val dashChunkSourceFactory: DashChunkSource.Factory =
-            DefaultDashChunkSource.Factory(DefaultHttpDataSource.Factory())
-        val manifestDataSourceFactory = DefaultHttpDataSource.Factory()
-        return DashMediaSource.Factory(dashChunkSourceFactory, manifestDataSourceFactory)
-            .setDrmSessionManagerProvider(drmSessionManagerProvider)
-            .createMediaSource(MediaItem.Builder().setUri(uri).build())
+            DefaultDashChunkSource.Factory(mediaFactory)
+        return DashMediaSource.Factory(dashChunkSourceFactory, mediaFactory)
+            .setDrmSessionManagerProvider(drmSessionManager)
+            .createMediaSource(
+                MediaItem.Builder()
+                    .setUri(uri).build()
+            )
     }
 
-    @Throws(IOException::class)
-    private fun executePost(
-        data: ByteArray,
-        requestProperties: Map<String, String>,
-        licenseUrl: String
-    ): ByteArray {
-        var connection: HttpURLConnection? = null
-        try {
-            connection = URL(licenseUrl).openConnection() as HttpURLConnection
-            connection.requestMethod = "POST"
-            connection.doOutput = true
-            connection.doInput = true
-            connection.setRequestProperty("Content-Type", "application/json")
-            connection.connectTimeout = 30000
-            connection.readTimeout = 30000
-
-            val drmInfo = JSONArray()
-            for (value in data) {
-                drmInfo.put(value.toInt() and 0xFF)
-            }
-            val payload = JSONObject().apply {
-                put("token", requestProperties["token"])
-                put("drm_info", drmInfo)
-                put("kid", requestProperties["kid"])
-            }.toString().toByteArray(StandardCharsets.UTF_8)
-
-            connection.outputStream.use { out ->
-                out.write(payload)
-            }
-
-            if (connection.responseCode >= 400) {
-                throw IOException("DRM request failed with ${connection.responseCode}")
-            }
-
-            connection.inputStream.use { input ->
-                val output = ByteArrayOutputStream()
-                val buffer = ByteArray(1024)
-                while (true) {
-                    val count = input.read(buffer)
-                    if (count == -1) break
-                    output.write(buffer, 0, count)
-                }
-                return output.toByteArray()
-            }
-        } finally {
-            connection?.disconnect()
-        }
-    }
-
-    @Throws(IOException::class)
-    private fun executePost(url: String): ByteArray {
-        var connection: HttpURLConnection? = null
-        try {
-            connection = URL(url).openConnection() as HttpURLConnection
-            connection.requestMethod = "POST"
-            connection.doInput = true
-            if (connection.responseCode >= 400) {
-                throw IOException("Provision request failed with ${connection.responseCode}")
-            }
-            connection.inputStream.use { input ->
-                val output = ByteArrayOutputStream()
-                val buffer = ByteArray(1024)
-                while (true) {
-                    val count = input.read(buffer)
-                    if (count == -1) break
-                    output.write(buffer, 0, count)
-                }
-                return output.toByteArray()
-            }
-        } finally {
-            connection?.disconnect()
-        }
+    companion object {
+        private const val TAG = "DrmHelper"
     }
 }

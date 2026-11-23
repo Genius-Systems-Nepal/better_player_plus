@@ -14,10 +14,11 @@ dependencies:
   flutter_localizations:
     sdk: flutter
   collection: ^1.19.1
-  wakelock_plus: ^1.4.0
+  # Keep compatible with FlutterNettv's package_info_plus ^8 (wakelock_plus >=1.4 pulls ^9/^10).
+  wakelock_plus: ^1.2.5
   path_provider: ^2.1.5
   visibility_detector: ^0.4.0+2
-  flutter_widget_from_html_core: ^0.17.0
+  flutter_widget_from_html_core: ^0.15.1
 
 dev_dependencies:
   flutter_test:

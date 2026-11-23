@@ -92,6 +92,7 @@ class MethodChannelVideoPlayer extends VideoPlayerPlatform {
           'activityName': dataSource.activityName,
           'clearKey': dataSource.clearKey,
           'videoExtension': dataSource.videoExtension,
+          'cmcdConfig': dataSource.cmcdConfig,
         };
       case DataSourceType.file:
         dataSourceDescription = <String, dynamic>{
@@ -175,8 +176,34 @@ class MethodChannelVideoPlayer extends VideoPlayerPlatform {
       });
 
   @override
+  Future<void> setPipEnterOnLeave(int? textureId, bool enabled) =>
+      _channel.invokeMethod<void>(
+        'setPipEnterOnLeave',
+        <String, dynamic>{'textureId': textureId, 'enabled': enabled},
+      );
+
+  @override
+  Future<void> pauseAndHideMediaSession(int? textureId) =>
+      _channel.invokeMethod<void>('pauseAndHideMediaSession', <String, dynamic>{'textureId': textureId});
+
+  @override
   Future<bool?> isPictureInPictureEnabled(int? textureId) =>
       _channel.invokeMethod<bool>('isPictureInPictureSupported', <String, dynamic>{'textureId': textureId});
+
+  @override
+  Future<bool?> isActivityInPictureInPictureMode(int? textureId) =>
+      _channel.invokeMethod<bool>('isActivityInPictureInPictureMode', <String, dynamic>{'textureId': textureId});
+
+  @override
+  Future<bool?> checkPipPermission(int? textureId) =>
+      _channel.invokeMethod<bool>('checkPictureInPicturePermission', <String, dynamic>{'textureId': textureId});
+
+  @override
+  Future<void> openPipPermissionSettings(int? textureId) =>
+      _channel.invokeMethod<void>(
+        'openPictureInPicturePermissionSettings',
+        <String, dynamic>{'textureId': textureId},
+      );
 
   @override
   Future<void> disablePictureInPicture(int? textureId) =>
@@ -309,6 +336,9 @@ class MethodChannelVideoPlayer extends VideoPlayerPlatform {
 
           case 'pipStop':
             return VideoEvent(eventType: VideoEventType.pipStop, key: key);
+
+          case 'displayTurnedOff':
+            return VideoEvent(eventType: VideoEventType.displayTurnedOff, key: key);
 
           case 'nerdStat':
             return VideoEvent(

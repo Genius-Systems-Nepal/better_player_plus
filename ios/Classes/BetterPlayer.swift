@@ -3,6 +3,7 @@ import Flutter
 import AVFoundation
 import AVKit
 import UIKit
+import MediaPlayer
 import GoogleInteractiveMediaAds
 
 private var timeRangeContext = 0
@@ -51,6 +52,8 @@ public class BetterPlayer: NSObject, FlutterPlatformView, FlutterStreamHandler, 
     private let nerdStatHelper = NerdStatHelper()
     private var nerdStatTimer: Timer?
     private var quanteecPlugin: AnyObject?
+    private var pipEnterOnLeave: Bool = false
+    private var pausedForDisplayLock: Bool = false
 
     public init(quanteecConfig: [String: Any]? = nil) {
         self.player = AVPlayer()
@@ -72,6 +75,12 @@ public class BetterPlayer: NSObject, FlutterPlatformView, FlutterStreamHandler, 
         self.disposed = false
         self.setUpAdsLoader()
         self.contentPlayhead = IMAAVPlayerContentPlayhead(avPlayer: self.player)
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(applicationProtectedDataWillBecomeUnavailable(_:)),
+            name: UIApplication.protectedDataWillBecomeUnavailableNotification,
+            object: nil
+        )
     }
 
     public override convenience init() {
@@ -212,35 +221,67 @@ public class BetterPlayer: NSObject, FlutterPlatformView, FlutterStreamHandler, 
         }
     }
 
-    public func setDataSourceURL(_ url: URL, key: String?, certificateUrl: String?, licenseUrl: String?, headers: [AnyHashable: Any], useCache: Bool, cacheKey: String?, cacheManager: CacheManager, overriddenDuration: Int, videoExtension: String?, adsUrl: String?, drmToken: String? = nil) {
-//         print("video url === \(url)")
-
+    public func setDataSourceURL(
+        _ url: URL,
+        key: String?,
+        certificateUrl: String?,
+        licenseUrl: String?,
+        headers: [AnyHashable: Any],
+        useCache: Bool,
+        cacheKey: String?,
+        cacheManager: CacheManager,
+        overriddenDuration: Int,
+        videoExtension: String?,
+        adsUrl: String?,
+        drmToken: String? = nil,
+        cmcdConfig: NSDictionary? = nil
+    ) {
         self.overriddenDuration = 0
+        pausedForDisplayLock = false
         adTagUrlOrAdsResponse = adsUrl ?? ""
         hasRequestedAds = false
         adRequestRetryCount = 0
+
+        var mediaURL = url
         var finalHeaders = headers
-        if finalHeaders["dummy"] == nil {} // keep dictionary type stable
+        if CmcdHelper.isActive(config: cmcdConfig) {
+            mediaURL = CmcdHelper.taggedURL(from: url, config: cmcdConfig)
+            finalHeaders = CmcdHelper.httpHeaders(
+                merging: headers as NSDictionary,
+                config: cmcdConfig,
+                url: mediaURL
+            ) as? [AnyHashable: Any] ?? headers
+        }
+
+        let normalizedToken = Self.normalizeDrmToken(drmToken)
 
         let item: AVPlayerItem
         if useCache {
             let _cacheKey = cacheKey
             let _videoExt = videoExtension
-            item = cacheManager.getCachingPlayerItemForNormalPlayback(url, cacheKey: _cacheKey, videoExtension: _videoExt, headers: finalHeaders as NSDictionary as! [NSObject: AnyObject]) ?? AVPlayerItem(url: url)
+            item = cacheManager.getCachingPlayerItemForNormalPlayback(
+                mediaURL,
+                cacheKey: _cacheKey,
+                videoExtension: _videoExt,
+                headers: finalHeaders as NSDictionary as! [NSObject: AnyObject]
+            ) ?? AVPlayerItem(url: mediaURL)
         } else {
-            let asset = AVURLAsset(url: url, options: ["AVURLAssetHTTPHeaderFieldsKey": finalHeaders])
-            if let drmToken = drmToken, !drmToken.isEmpty, let certificateUrl = certificateUrl {
-                let license = licenseUrl.flatMap { URL(string: $0) }
+            let asset = AVURLAsset(url: mediaURL, options: ["AVURLAssetHTTPHeaderFieldsKey": finalHeaders])
+            if let certificateUrl = certificateUrl,
+               !certificateUrl.isEmpty,
+               let licenseUrl = licenseUrl,
+               !licenseUrl.isEmpty,
+               let token = normalizedToken {
+                let license = URL(string: licenseUrl)
                 let delegate = BetterPlayerVuDrmAssetsLoaderDelegate(
                     certificateURL: certificateUrl,
                     licenseURL: license,
-                    fairPlayToken: drmToken
+                    fairPlayToken: token
                 )
                 self.vuDrmAssetsLoaderDelegate = delegate
-                let qos = DispatchQoS.QoSClass.default
                 let streamQueue = DispatchQueue(
                     label: "streamQueue.vudrm",
-                    qos: DispatchQoS(qosClass: qos, relativePriority: -1),
+                    qos: DispatchQoS(qosClass: .default, relativePriority: -1),
                     attributes: []
                 )
                 asset.resourceLoader.setDelegate(delegate, queue: streamQueue)
@@ -250,8 +291,11 @@ public class BetterPlayer: NSObject, FlutterPlatformView, FlutterStreamHandler, 
                 if let certURL = certURL {
                     let delegate = BetterPlayerEzDrmAssetsLoaderDelegate(certURL, withLicenseURL: licURL)
                     self.loaderDelegate = delegate
-                    let qos = DispatchQoS.QoSClass.default
-                    let streamQueue = DispatchQueue(label: "streamQueue", qos: DispatchQoS(qosClass: qos, relativePriority: -1), attributes: [])
+                    let streamQueue = DispatchQueue(
+                        label: "streamQueue",
+                        qos: DispatchQoS(qosClass: .default, relativePriority: -1),
+                        attributes: []
+                    )
                     asset.resourceLoader.setDelegate(delegate, queue: streamQueue)
                 }
             }
@@ -262,6 +306,16 @@ public class BetterPlayer: NSObject, FlutterPlatformView, FlutterStreamHandler, 
         }
         setDataSourcePlayerItem(item, key: key)
         requestAds()
+    }
+
+    private static func normalizeDrmToken(_ token: String?) -> String? {
+        guard let token = token?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !token.isEmpty,
+              token.lowercased() != "null"
+        else {
+            return nil
+        }
+        return token
     }
 
     private func setDataSourcePlayerItem(_ item: AVPlayerItem, key: String?) {
@@ -693,6 +747,57 @@ public class BetterPlayer: NSObject, FlutterPlatformView, FlutterStreamHandler, 
         }
     }
 
+    /// Arm automatic PiP when the user leaves the app (mini → background).
+    public func setPipEnterOnLeave(_ enabled: Bool) {
+        if disposed {
+            return
+        }
+        pipEnterOnLeave = enabled
+        if #available(iOS 14.2, *) {
+            pipController?.canStartPictureInPictureAutomaticallyFromInline = enabled
+            if enabled, pipController == nil, let layer = thisView.playerLayer {
+                playerLayerRef = layer
+                setupPipController()
+                pipController?.canStartPictureInPictureAutomaticallyFromInline = true
+            }
+        }
+    }
+
+    /// Force-pause and clear Now Playing (Cast / no local BG audio).
+    public func pauseAndHideMediaSession() {
+        if disposed {
+            return
+        }
+        pipEnterOnLeave = false
+        if #available(iOS 14.2, *) {
+            pipController?.canStartPictureInPictureAutomaticallyFromInline = false
+        }
+        isPlaying = false
+        player.pause()
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = [:]
+        eventSink?(["event": "pause"])
+    }
+
+    @objc private func applicationProtectedDataWillBecomeUnavailable(_ notification: Notification) {
+        pauseForDisplayLockAndNotify()
+    }
+
+    private func pauseForDisplayLockAndNotify() {
+        if disposed {
+            return
+        }
+        pausedForDisplayLock = true
+        pipEnterOnLeave = false
+        if #available(iOS 14.2, *) {
+            pipController?.canStartPictureInPictureAutomaticallyFromInline = false
+        }
+        isPlaying = false
+        player.pause()
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = [:]
+        eventSink?(["event": "pause"])
+        eventSink?(["event": "displayTurnedOff"])
+    }
+
     public func setRestoreUserInterfaceForPIPStopCompletionHandler(_ restore: Bool) {
         restoreUIOnPipStop?(restore)
         restoreUIOnPipStop = nil
@@ -833,6 +938,7 @@ public class BetterPlayer: NSObject, FlutterPlatformView, FlutterStreamHandler, 
     }
 
     public func dispose() {
+        NotificationCenter.default.removeObserver(self)
         pause()
         disposeSansEventChannel()
         stopNerdStatTimer()
