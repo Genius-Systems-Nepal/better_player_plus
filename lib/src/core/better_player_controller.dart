@@ -98,7 +98,9 @@ class BetterPlayerController {
   final ValueNotifier<bool> subtitlesOverlayVisible = ValueNotifier<bool>(true);
 
   void setSubtitlesOverlayVisible(bool visible) {
-    if (subtitlesOverlayVisible.value == visible) return;
+    if (subtitlesOverlayVisible.value == visible) {
+      return;
+    }
     subtitlesOverlayVisible.value = visible;
   }
 
@@ -1009,11 +1011,10 @@ class BetterPlayerController {
       }
     }
   }
-  }
 
-  ///Setup overridden aspect ratio. Pass null to clear the override.
-  void setOverriddenAspectRatio(double? aspectRatio) _overriddenAspectRatio = aspectRatio;
-  }
+  ///Setup overridden aspect ratio. Pass null to clear the override..
+  void setOverriddenAspectRatio(double? aspectRatio) {
+    _overriddenAspectRatio = aspectRatio}
 
   ///Get aspect ratio used in current video. If aspect ratio is null, then
   ///aspect ratio from BetterPlayerConfiguration will be used. Otherwise
