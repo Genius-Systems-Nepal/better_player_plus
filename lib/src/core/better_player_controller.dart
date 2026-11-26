@@ -1014,7 +1014,8 @@ class BetterPlayerController {
 
   ///Setup overridden aspect ratio. Pass null to clear the override..
   void setOverriddenAspectRatio(double? aspectRatio) {
-    _overriddenAspectRatio = aspectRatio}
+    _overriddenAspectRatio = aspectRatio;
+  }
 
   ///Get aspect ratio used in current video. If aspect ratio is null, then
   ///aspect ratio from BetterPlayerConfiguration will be used. Otherwise

@@ -82,7 +82,9 @@ class _BetterPlayerSubtitlesDrawerState extends State<BetterPlayerSubtitlesDrawe
   }
 
   void _onOverlayVisibilityChanged() {
-    if (mounted) setState(() {});
+    if (mounted) {
+      setState(() {});
+    }
   }
 
   ///Called when player state has changed, i.e. new player position, etc.
