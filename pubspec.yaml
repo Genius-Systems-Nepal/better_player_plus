@@ -11,10 +11,11 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  material_ui: ^1.11.1
+  cupertino_ui: ^1.1.7
   flutter_localizations:
     sdk: flutter
   collection: ^1.19.1
-  # Keep compatible with FlutterNettv's package_info_plus ^8 (wakelock_plus >=1.4 pulls ^9/^10).
   wakelock_plus: ^1.2.5
   path_provider: ^2.1.5
   visibility_detector: ^0.4.0+2

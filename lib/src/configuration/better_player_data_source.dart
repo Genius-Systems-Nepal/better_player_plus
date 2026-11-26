@@ -107,9 +107,10 @@ class BetterPlayerDataSource {
     useAsmsTracks: useAsmsTracks,
     resolutions: qualities,
     cacheConfiguration: cacheConfiguration,
-    notificationConfiguration: notificationConfiguration = const BetterPlayerNotificationConfiguration(
-      showNotification: false,
-    ),
+    notificationConfiguration: notificationConfiguration ??
+        const BetterPlayerNotificationConfiguration(
+          showNotification: false,
+        ),
     overriddenDuration: overriddenDuration,
     placeholder: placeholder,
     quanteecConfig: quanteecConfig,
@@ -138,9 +139,10 @@ class BetterPlayerDataSource {
     useAsmsTracks: useAsmsTracks,
     resolutions: qualities,
     cacheConfiguration: cacheConfiguration,
-    notificationConfiguration: notificationConfiguration = const BetterPlayerNotificationConfiguration(
-      showNotification: false,
-    ),
+    notificationConfiguration: notificationConfiguration ??
+        const BetterPlayerNotificationConfiguration(
+          showNotification: false,
+        ),
     overriddenDuration: overriddenDuration,
     placeholder: placeholder,
   );

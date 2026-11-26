@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:math';
+
 import 'package:better_player_plus/better_player_plus.dart';
 import 'package:better_player_plus/src/configuration/better_player_controller_event.dart';
 import 'package:better_player_plus/src/controls/better_player_cupertino_controls.dart';
@@ -8,7 +9,7 @@ import 'package:better_player_plus/src/controls/better_player_material_controls.
 import 'package:better_player_plus/src/core/better_player_utils.dart';
 import 'package:better_player_plus/src/subtitles/better_player_subtitles_drawer.dart';
 import 'package:better_player_plus/src/video_player/video_player.dart';
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 class BetterPlayerWithControls extends StatefulWidget {
   const BetterPlayerWithControls({super.key, this.controller});

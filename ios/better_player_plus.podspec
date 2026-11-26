@@ -21,9 +21,11 @@ It solves many common use cases out of the box and is easy to integrate.
   s.dependency 'HLSCachingReverseProxyServer'
   s.dependency 'PINCache'
   s.dependency 'GoogleAds-IMA-iOS-SDK', '~> 3.16.3'
-  
+  s.dependency 'QuanteecIOS'
+
   s.platform = :ios, '13.0'
   s.swift_version = '5.0'
-  s.pod_target_xcconfig = { 'DEFINES_MODULE' => 'YES', 'VALID_ARCHS[sdk=iphonesimulator*]' => 'x86_64' }
+  # Do not pin simulator VALID_ARCHS to x86_64 — Apple Silicon needs arm64 simulators.
+  s.pod_target_xcconfig = { 'DEFINES_MODULE' => 'YES' }
 end
 

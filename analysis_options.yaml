@@ -8,3 +8,7 @@ analyzer:
     no_default_cases: ignore
     discarded_futures: ignore
     avoid_positional_boolean_parameters: ignore
+  exclude:
+    - build/**
+    - android/**
+    - ios/**

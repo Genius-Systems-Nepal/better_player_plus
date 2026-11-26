@@ -755,7 +755,8 @@ public class BetterPlayer: NSObject, FlutterPlatformView, FlutterStreamHandler, 
         pipEnterOnLeave = enabled
         if #available(iOS 14.2, *) {
             pipController?.canStartPictureInPictureAutomaticallyFromInline = enabled
-            if enabled, pipController == nil, let layer = thisView.playerLayer {
+            if enabled, pipController == nil {
+                let layer = thisView.playerLayer
                 playerLayerRef = layer
                 setupPipController()
                 pipController?.canStartPictureInPictureAutomaticallyFromInline = true
